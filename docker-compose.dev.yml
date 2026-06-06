@@ -1,0 +1,13 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.dev
+    environment:
+      S3_BUCKET: storage-602343785232-ap-southeast-1-an
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+    volumes:
+      - ${USERPROFILE}/.aws:/root/.aws:ro
+      - ./backend:/app
+    ports:
+      - "8000:8000"

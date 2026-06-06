@@ -1,0 +1,26 @@
+# OS files
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+
+# Node / frontend
+frontend/node_modules/
+frontend/dist/
+
+# Local env files
+.env
+.env.*
+
+# Local editor files
+.idea/
+.vscode/
+
+# Sensitive/local project files
+backend/run.txt
