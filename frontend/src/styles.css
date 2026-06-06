@@ -183,6 +183,15 @@ input[type="file"]::file-selector-button {
   color: #fecdd3;
 }
 
+.success-box {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: #13261d;
+  border: 1px solid #2f6b4f;
+  color: #bbf7d0;
+}
+
 .empty-state {
   padding: 18px 4px 4px;
   color: #8fa3b8;
@@ -211,6 +220,13 @@ input[type="file"]::file-selector-button {
   min-width: 0;
 }
 
+.row-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
 .file-path {
   word-break: break-all;
   color: #f4f7fb;
@@ -232,7 +248,8 @@ input[type="file"]::file-selector-button {
 
   .header-row,
   .form-row,
-  .file-row {
+  .file-row,
+  .row-actions {
     flex-direction: column;
   }
 

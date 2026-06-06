@@ -44,10 +44,12 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [deleteKey, setDeleteKey] = useState('');
   const [deleting, setDeleting] = useState('');
+  const [downloading, setDownloading] = useState('');
 
   const sortedFiles = useMemo(
     () => [...files].sort((a, b) => a.key.localeCompare(b.key)),
@@ -57,6 +59,7 @@ export default function App() {
   async function loadFiles(isManualRefresh = false) {
     try {
       setError('');
+      setSuccess('');
       if (isManualRefresh) {
         setRefreshing(true);
       } else {
@@ -82,6 +85,7 @@ export default function App() {
 
     try {
       setError('');
+      setSuccess('');
       setUploading(true);
       const formData = new FormData();
       formData.append('file', selectedFile);
@@ -107,6 +111,7 @@ export default function App() {
 
     try {
       setError('');
+      setSuccess('');
       setDeleting(normalized);
       await api(`/files/${encodeURIComponent(normalized)}`, {
         method: 'DELETE',
@@ -119,6 +124,32 @@ export default function App() {
       setError(err.message || 'Delete failed');
     } finally {
       setDeleting('');
+    }
+  }
+
+  async function handleDownload(rawKey) {
+    const normalized = normalizeKey(rawKey);
+    if (!normalized) return;
+
+    try {
+      setError('');
+      setSuccess('');
+      setDownloading(normalized);
+      const data = await api(`/files/${encodeURIComponent(normalized)}/download`);
+      if (!data?.url) {
+        throw new Error('Download URL not found');
+      }
+      const link = document.createElement('a');
+      link.href = data.url;
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setSuccess(`Download started for ${displayPath(normalized)}`);
+    } catch (err) {
+      setError(err.message || 'Download failed');
+    } finally {
+      setDownloading('');
     }
   }
 
@@ -182,6 +213,7 @@ export default function App() {
         </div>
 
         {error ? <div className="error-box">{error}</div> : null}
+        {success ? <div className="success-box">{success}</div> : null}
 
         {loading ? (
           <div className="empty-state">Loading files...</div>
@@ -195,14 +227,24 @@ export default function App() {
                   <div className="file-path">{displayPath(file.key)}</div>
                   <div className="file-size">{typeof file.size === 'number' ? `${file.size} bytes` : 'Unknown size'}</div>
                 </div>
-                <button
-                  className="ghost-button"
-                  onClick={() => handleDelete(file.key)}
-                  disabled={deleting === file.key}
-                  type="button"
-                >
-                  {deleting === file.key ? 'Deleting...' : 'Delete'}
-                </button>
+                <div className="row-actions">
+                  <button
+                    className="secondary-button"
+                    onClick={() => handleDownload(file.key)}
+                    disabled={downloading === file.key}
+                    type="button"
+                  >
+                    {downloading === file.key ? 'Preparing...' : 'Download'}
+                  </button>
+                  <button
+                    className="ghost-button"
+                    onClick={() => handleDelete(file.key)}
+                    disabled={deleting === file.key}
+                    type="button"
+                  >
+                    {deleting === file.key ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
               </li>
             ))}
           </ul>

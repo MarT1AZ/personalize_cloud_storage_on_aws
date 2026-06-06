@@ -2,6 +2,7 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import boto3
 import os
+from pathlib import PurePosixPath
 
 app = FastAPI()
 
@@ -78,6 +79,26 @@ def delete_key(key: str):
 
     return {
         "deleted": key,
+    }
+
+
+@app.get("/api/files/{key:path}/download")
+def get_download_url(key: str):
+    filename = PurePosixPath(key).name or "download"
+    url = s3.generate_presigned_url(
+        "get_object",
+        Params={
+            "Bucket": BUCKET,
+            "Key": key,
+            "ResponseContentDisposition": f'attachment; filename="{filename}"',
+        },
+        ExpiresIn=60,
+    )
+
+    return {
+        "key": key,
+        "url": url,
+        "expires_in": 60,
     }
 
 
