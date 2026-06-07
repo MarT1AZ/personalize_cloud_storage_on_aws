@@ -5,6 +5,7 @@ Simple personal cloud storage app with a React frontend and a FastAPI backend ba
 ## Current Features
 - Fetch list of files
 - Show an absolute path for each item
+- Show file metadata for each item
 - Delete by path
 - Delete on item card
 - Upload file

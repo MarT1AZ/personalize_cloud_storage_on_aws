@@ -39,7 +39,7 @@ The frontend is not part of Docker. It talks to the backend directly over HTTP.
 - `GET /api/` returns `{"status":"ok"}`
 - `GET /api/whoami` returns the current AWS caller identity
 - `GET /api/check_bucket` returns the configured bucket name
-- `GET /api/files` returns a list of objects with `key` and `size`
+- `GET /api/files` returns file items with key, name, path, size, upload date, last modified, and file type
 - `POST /api/upload` uploads one multipart file
 - `GET /api/files/{key}/download` returns a short-lived presigned download URL
 - `DELETE /api/files/{key}` deletes an object by key

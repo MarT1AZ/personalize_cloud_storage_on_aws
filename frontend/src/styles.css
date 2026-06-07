@@ -218,6 +218,7 @@ input[type="file"]::file-selector-button {
 
 .file-meta {
   min-width: 0;
+  flex: 1;
 }
 
 .row-actions {
@@ -227,16 +228,43 @@ input[type="file"]::file-selector-button {
   flex-shrink: 0;
 }
 
-.file-path {
-  word-break: break-all;
+.file-name {
   color: #f4f7fb;
-  font-weight: 600;
+  font-weight: 700;
+  font-size: 1rem;
 }
 
-.file-size {
+.file-path {
   margin-top: 4px;
+  word-break: break-all;
   color: #8fa3b8;
-  font-size: 0.9rem;
+  font-size: 0.92rem;
+}
+
+.file-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 10px 16px;
+  margin: 12px 0 0;
+}
+
+.file-detail {
+  min-width: 0;
+}
+
+.file-detail dt {
+  margin: 0 0 4px;
+  color: #8fa3b8;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.file-detail dd {
+  margin: 0;
+  color: #e8eef6;
+  font-size: 0.94rem;
+  word-break: break-word;
 }
 
 @media (max-width: 640px) {
@@ -258,5 +286,9 @@ input[type="file"]::file-selector-button {
   .danger-button,
   .ghost-button {
     width: 100%;
+  }
+
+  .file-details {
+    grid-template-columns: 1fr;
   }
 }

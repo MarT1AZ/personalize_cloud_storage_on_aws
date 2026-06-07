@@ -11,6 +11,40 @@ function displayPath(key) {
   return key.startsWith('/') ? key : `/${key}`;
 }
 
+function formatBytes(value) {
+  if (typeof value !== 'number' || Number.isNaN(value) || value < 0) {
+    return 'Unknown size';
+  }
+
+  if (value === 0) {
+    return '0 bytes';
+  }
+
+  const units = ['bytes', 'kB', 'MB', 'GB', 'TB', 'PB'];
+  const unitIndex = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  const scaled = value / 1024 ** unitIndex;
+  const digits = scaled >= 10 || unitIndex === 0 ? 0 : 1;
+
+  return `${scaled.toFixed(digits)} ${units[unitIndex]}`;
+}
+
+function formatDateTime(value) {
+  if (!value) return 'Unknown';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Unknown';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(date);
+}
+
 async function readResponse(response) {
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
@@ -224,8 +258,26 @@ export default function App() {
             {sortedFiles.map((file) => (
               <li className="file-row" key={file.key}>
                 <div className="file-meta">
-                  <div className="file-path">{displayPath(file.key)}</div>
-                  <div className="file-size">{typeof file.size === 'number' ? `${file.size} bytes` : 'Unknown size'}</div>
+                  <div className="file-name">{file.name || 'Unnamed file'}</div>
+                  <div className="file-path">{file.path || displayPath(file.key)}</div>
+                  <dl className="file-details">
+                    <div className="file-detail">
+                      <dt>Size</dt>
+                      <dd>{formatBytes(file.size)}</dd>
+                    </div>
+                    <div className="file-detail">
+                      <dt>Upload date</dt>
+                      <dd>{formatDateTime(file.upload_date)}</dd>
+                    </div>
+                    <div className="file-detail">
+                      <dt>Last modified</dt>
+                      <dd>{formatDateTime(file.last_modified)}</dd>
+                    </div>
+                    <div className="file-detail">
+                      <dt>Extension</dt>
+                      <dd>{file.file_type || 'Unknown'}</dd>
+                    </div>
+                  </dl>
                 </div>
                 <div className="row-actions">
                   <button

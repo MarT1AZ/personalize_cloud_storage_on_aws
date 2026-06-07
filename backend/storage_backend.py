@@ -46,13 +46,27 @@ def current_bucket():
 def list_files():
     response = s3.list_objects_v2(Bucket=BUCKET)
 
-    return [
-        {
-            "key": obj["Key"],
-            "size": obj["Size"],
-        }
-        for obj in response.get("Contents", [])
-    ]
+    files = []
+
+    for obj in response.get("Contents", []):
+        key = obj["Key"]
+        head = s3.head_object(Bucket=BUCKET, Key=key)
+        path = PurePosixPath(key)
+        last_modified = head.get("LastModified")
+
+        files.append(
+            {
+                "key": key,
+                "name": path.name or key,
+                "path": f"/{key.lstrip('/')}",
+                "size": head.get("ContentLength", obj.get("Size")),
+                "upload_date": last_modified.isoformat() if last_modified else None,
+                "last_modified": last_modified.isoformat() if last_modified else None,
+                "file_type": path.suffix.lstrip(".").lower() or "Unknown",
+            }
+        )
+
+    return files
 
 
 @app.post("/api/upload")
