@@ -228,10 +228,28 @@ input[type="file"]::file-selector-button {
   flex-shrink: 0;
 }
 
+.file-name-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .file-name {
   color: #f4f7fb;
   font-weight: 700;
   font-size: 1rem;
+}
+
+.rename-tag {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #14311f;
+  border: 1px solid #2f6b4f;
+  color: #bbf7d0;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  word-break: break-word;
 }
 
 .file-path {
@@ -246,6 +264,54 @@ input[type="file"]::file-selector-button {
   grid-template-columns: repeat(2, minmax(180px, 1fr));
   gap: 10px 16px;
   margin: 12px 0 0;
+}
+
+.action-menu {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.rename-box {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+  max-width: 380px;
+}
+
+.rename-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.rename-preview {
+  padding: 10px 12px;
+  border: 1px solid #2a3850;
+  border-radius: 8px;
+  background: #121b29;
+  color: #cfe0f1;
+  font-size: 0.92rem;
+  word-break: break-word;
+}
+
+.inline-success-box,
+.inline-error-box {
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 0.92rem;
+}
+
+.inline-success-box {
+  background: #13261d;
+  border: 1px solid #2f6b4f;
+  color: #bbf7d0;
+}
+
+.inline-error-box {
+  background: #2c1620;
+  border: 1px solid #703647;
+  color: #fecdd3;
 }
 
 .file-detail {
@@ -290,5 +356,10 @@ input[type="file"]::file-selector-button {
 
   .file-details {
     grid-template-columns: 1fr;
+  }
+
+  .rename-actions,
+  .action-menu {
+    flex-direction: column;
   }
 }

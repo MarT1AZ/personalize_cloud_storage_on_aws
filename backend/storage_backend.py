@@ -1,5 +1,6 @@
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import boto3
 import os
 from pathlib import PurePosixPath
@@ -17,6 +18,10 @@ CORS_ORIGINS = [
 ]
 
 s3 = boto3.client("s3")
+
+
+class RenameRequest(BaseModel):
+    new_name: str
 
 app.add_middleware(
     CORSMiddleware,
@@ -85,6 +90,24 @@ def delete_key(key: str):
     }
 
 
+def build_renamed_key(key: str, new_name: str):
+    if key.endswith("/"):
+        raise HTTPException(status_code=400, detail="Folders cannot be renamed from this view")
+
+    normalized_name = new_name.strip().lstrip("/")
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="New name is required")
+
+    source_path = PurePosixPath(key)
+    extension = source_path.suffix
+    final_name = normalized_name if not extension or normalized_name.endswith(extension) else f"{normalized_name}{extension}"
+
+    if str(source_path.parent) == ".":
+        return final_name
+
+    return source_path.parent.joinpath(final_name).as_posix()
+
+
 @app.get("/api/files/{key:path}/download")
 def get_download_url(key: str):
     filename = PurePosixPath(key).name or "download"
@@ -102,6 +125,30 @@ def get_download_url(key: str):
         "key": key,
         "url": url,
         "expires_in": 60,
+    }
+
+
+@app.post("/api/files/{key:path}/rename")
+def rename_file(key: str, request: RenameRequest):
+    final_key = build_renamed_key(key, request.new_name)
+
+    if final_key != key:
+        s3.copy_object(
+            Bucket=BUCKET,
+            CopySource={
+                "Bucket": BUCKET,
+                "Key": key,
+            },
+            Key=final_key,
+        )
+        s3.delete_object(
+            Bucket=BUCKET,
+            Key=key,
+        )
+
+    return {
+        "source_key": key,
+        "renamed_key": final_key,
     }
 
 

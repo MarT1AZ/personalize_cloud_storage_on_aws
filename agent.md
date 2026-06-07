@@ -41,7 +41,8 @@ The frontend is not part of Docker. It talks to the backend directly over HTTP.
 - `GET /api/check_bucket` returns the configured bucket name
 - `GET /api/files` returns file items with key, name, path, size, and upload date
 - `POST /api/upload` uploads one multipart file
-- `GET /api/files/{key}/download` returns a short-lived presigned download URL
+- `GET /api/files/{key:path}/download` returns a short-lived presigned download URL
+- `POST /api/files/{key:path}/rename` renames a file by copying to the corrected final name and deleting the original
 - `DELETE /api/files/{key}` deletes an object by key
 - `DELETE /api/delete?key=...` is an alias for delete by query string
 
@@ -106,6 +107,7 @@ Backend Docker dev run:
 ## Notes For Future Work
 - `backend/run.txt` contains older example commands and sensitive-looking values, so treat it carefully
 - Use `head_object` only when a user opens a file detail view for fuller metadata
+- Rename should preserve the original extension even when the user omits it or types a different one
 
 ## Feature Tracking
 - Keep this file updated whenever a feature is added, removed, or merged
