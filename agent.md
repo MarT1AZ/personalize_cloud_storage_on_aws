@@ -41,6 +41,7 @@ The frontend is not part of Docker. It talks to the backend directly over HTTP.
 - `GET /api/check_bucket` returns the configured bucket name
 - `GET /api/files` returns a list of objects with `key` and `size`
 - `POST /api/upload` uploads one multipart file
+- `GET /api/files/{key}/download` returns a short-lived presigned download URL
 - `DELETE /api/files/{key}` deletes an object by key
 - `DELETE /api/delete?key=...` is an alias for delete by query string
 
@@ -60,7 +61,7 @@ Backend Docker dev run:
 2. This runs `uvicorn` with `--reload`
 3. Open `http://localhost:8000/docs`
 
-## Git workflow
+## Git workflow & permission
 - Git CLI commands that change repository state require user permission.
 - Read-only Git CLI commands that do not change code or repository state, such as `git status`, `git log`, and `git diff`, can be run without asking first.
 - Before running `git add` and `git commit`, list the exact CLI commands and the commit message, and make sure the message matches the actual work done.
@@ -68,6 +69,17 @@ Backend Docker dev run:
 - Every time a branch is switched or created, state the current branch afterward.
 - Dev containers should rely on the bind mount from `docker-compose.dev.yml`.
 - Keep generated cache and log files out of git.
+
+## Docker workflow & permission
+- Dev start: `docker compose -f docker-compose.dev.yml up`
+- Dev rebuild image: `docker compose -f docker-compose.dev.yml build`
+- Dev close/take down: `docker compose -f docker-compose.dev.yml down`
+- Prod start: `docker compose up`
+- Prod rebuild image: `docker compose build`
+- Prod close/take down: `docker compose down`
+- Inspect: `docker ps` # allowed without asking
+- Inspect all docker (stop/running): `docker ps -a` # allowed without asking
+
 
 ## Docker Notes
 `docker-compose.yml`:
@@ -94,3 +106,10 @@ Backend Docker dev run:
 - `backend/run.txt` contains older example commands and sensitive-looking values, so treat it carefully
 - `GET /api/files` currently returns only `key` and `size`
 - if richer metadata is needed, it must be added explicitly in the backend response
+
+## Feature Tracking
+- Keep this file updated whenever a feature is added, removed, or merged
+- Record user-facing features in `README.md` so the repo history stays easy to follow
+- If a branch changes user-facing behavior, update this document in the same pass
+- Document features in simple user-facing language
+- Remove technical detail from feature documentation
