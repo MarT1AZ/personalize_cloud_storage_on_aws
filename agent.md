@@ -39,7 +39,7 @@ The frontend is not part of Docker. It talks to the backend directly over HTTP.
 - `GET /api/` returns `{"status":"ok"}`
 - `GET /api/whoami` returns the current AWS caller identity
 - `GET /api/check_bucket` returns the configured bucket name
-- `GET /api/files` returns file items with key, name, path, size, upload date, last modified, and file type
+- `GET /api/files` returns file items with key, name, path, size, and upload date
 - `POST /api/upload` uploads one multipart file
 - `GET /api/files/{key}/download` returns a short-lived presigned download URL
 - `DELETE /api/files/{key}` deletes an object by key
@@ -65,6 +65,7 @@ Backend Docker dev run:
 - Git CLI commands that change repository state require user permission.
 - Read-only Git CLI commands that do not change code or repository state, such as `git status`, `git log`, and `git diff`, can be run without asking first.
 - Before running `git add` and `git commit`, list the exact CLI commands and the commit message, and make sure the message matches the actual work done.
+- Use `git commit -m "Title" -m "Detailed description"` so commits include both a title and a description.
 - Before running `git push`, ask the user and list the exact CLI command.
 - Every time a branch is switched or created, state the current branch afterward.
 - Dev containers should rely on the bind mount from `docker-compose.dev.yml`.
@@ -104,8 +105,7 @@ Backend Docker dev run:
 
 ## Notes For Future Work
 - `backend/run.txt` contains older example commands and sensitive-looking values, so treat it carefully
-- `GET /api/files` currently returns only `key` and `size`
-- if richer metadata is needed, it must be added explicitly in the backend response
+- Use `head_object` only when a user opens a file detail view for fuller metadata
 
 ## Feature Tracking
 - Keep this file updated whenever a feature is added, removed, or merged

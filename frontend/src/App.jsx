@@ -269,14 +269,6 @@ export default function App() {
                       <dt>Upload date</dt>
                       <dd>{formatDateTime(file.upload_date)}</dd>
                     </div>
-                    <div className="file-detail">
-                      <dt>Last modified</dt>
-                      <dd>{formatDateTime(file.last_modified)}</dd>
-                    </div>
-                    <div className="file-detail">
-                      <dt>Extension</dt>
-                      <dd>{file.file_type || 'Unknown'}</dd>
-                    </div>
                   </dl>
                 </div>
                 <div className="row-actions">
