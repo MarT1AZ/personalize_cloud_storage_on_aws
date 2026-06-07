@@ -11,6 +11,14 @@ function displayPath(key) {
   return key.startsWith('/') ? key : `/${key}`;
 }
 
+function normalizePrefix(value) {
+  const normalized = normalizeKey(value);
+  if (!normalized) {
+    return '';
+  }
+  return normalized.endsWith('/') ? normalized : `${normalized}/`;
+}
+
 function getFileExtension(key) {
   const name = key.split('/').pop() || '';
   const dotIndex = name.lastIndexOf('.');
@@ -97,7 +105,9 @@ async function api(path, options = {}) {
 }
 
 export default function App() {
+  const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
+  const [currentPrefix, setCurrentPrefix] = useState('');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -115,12 +125,40 @@ export default function App() {
   const [recentRenames, setRecentRenames] = useState({});
   const [recentDeletes, setRecentDeletes] = useState([]);
 
+  const sortedFolders = useMemo(
+    () => [...folders].sort((a, b) => a.path.localeCompare(b.path)),
+    [folders],
+  );
+
   const sortedFiles = useMemo(
-    () => [...files].sort((a, b) => a.key.localeCompare(b.key)),
+    () => [...files].sort((a, b) => a.path.localeCompare(b.path)),
     [files],
   );
 
-  async function loadFiles(isManualRefresh = false, preserveRecentRenames = false, preserveRecentDeletes = false) {
+  const breadcrumbItems = useMemo(() => {
+    const parts = currentPrefix.split('/').filter(Boolean);
+    let runningPrefix = '';
+
+    return [
+      { label: 'Root', prefix: '' },
+      ...parts.map((part) => {
+        runningPrefix = `${runningPrefix}${part}/`;
+        return {
+          label: part,
+          prefix: runningPrefix,
+        };
+      }),
+    ];
+  }, [currentPrefix]);
+
+  async function loadFiles(
+    nextPrefix = currentPrefix,
+    isManualRefresh = false,
+    preserveRecentRenames = false,
+    preserveRecentDeletes = false,
+  ) {
+    const normalizedPrefix = normalizePrefix(nextPrefix);
+
     try {
       setError('');
       setSuccess('');
@@ -135,8 +173,10 @@ export default function App() {
       } else {
         setLoading(true);
       }
-      const data = await api('/files');
-      setFiles(Array.isArray(data) ? data : []);
+      const data = await api(`/files?prefix=${encodeURIComponent(normalizedPrefix)}`);
+      setCurrentPrefix(data?.prefix || normalizedPrefix);
+      setFolders(Array.isArray(data?.folders) ? data.folders : []);
+      setFiles(Array.isArray(data?.files) ? data.files : []);
     } catch (err) {
       setError(err.message || 'Could not load files');
     } finally {
@@ -146,7 +186,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    loadFiles();
+    loadFiles('');
   }, []);
 
   useEffect(() => {
@@ -173,6 +213,7 @@ export default function App() {
       setUploading(true);
       const formData = new FormData();
       formData.append('file', selectedFile);
+      formData.append('prefix', currentPrefix);
 
       await api('/upload', {
         method: 'POST',
@@ -181,7 +222,7 @@ export default function App() {
 
       setSelectedFile(null);
       event.currentTarget.reset();
-      await loadFiles(true);
+      await loadFiles(currentPrefix, true);
     } catch (err) {
       setError(err.message || 'Upload failed');
     } finally {
@@ -207,7 +248,7 @@ export default function App() {
         const next = [displayPath(normalized), ...current.filter((item) => item !== displayPath(normalized))];
         return next.slice(0, 5);
       });
-      await loadFiles(true, true, true);
+      await loadFiles(currentPrefix, true, true, true);
     } catch (err) {
       setError(err.message || 'Delete failed');
     } finally {
@@ -282,7 +323,7 @@ export default function App() {
           message: `Renamed to ${displayPath(finalKey)}`,
         },
       }));
-      await loadFiles(true, true, true);
+      await loadFiles(currentPrefix, true, true, true);
     } catch (err) {
       setRenameNotices((current) => ({
         ...current,
@@ -302,9 +343,9 @@ export default function App() {
         <div>
           <p className="eyebrow">Personal cloud storage</p>
           <h1>Files</h1>
-          <p className="subtle">List, upload, and delete S3 objects from one simple screen.</p>
+          <p className="subtle">Browse folders, open nested paths, and manage files from one simple screen.</p>
         </div>
-        <button className="secondary-button" onClick={() => loadFiles(true)} disabled={refreshing || loading}>
+        <button className="secondary-button" onClick={() => loadFiles(currentPrefix, true)} disabled={refreshing || loading}>
           {refreshing ? 'Refreshing...' : 'Refresh'}
         </button>
       </section>
@@ -314,7 +355,21 @@ export default function App() {
           <section className="panel panel-main">
             <div className="section-head">
               <h2>Objects</h2>
-              <span className="count">{sortedFiles.length} items</span>
+              <span className="count">{sortedFolders.length + sortedFiles.length} items</span>
+            </div>
+
+            <div className="breadcrumbs" aria-label="Folder path">
+              {breadcrumbItems.map((item) => (
+                <button
+                  key={item.prefix || 'root'}
+                  className={item.prefix === currentPrefix ? 'breadcrumb-current' : 'breadcrumb-link'}
+                  disabled={item.prefix === currentPrefix}
+                  onClick={() => loadFiles(item.prefix, false, true, true)}
+                  type="button"
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
 
             {error ? <div className="error-box">{error}</div> : null}
@@ -332,10 +387,41 @@ export default function App() {
 
             {loading ? (
               <div className="empty-state">Loading files...</div>
-            ) : sortedFiles.length === 0 ? (
-              <div className="empty-state">No files found.</div>
+            ) : sortedFolders.length + sortedFiles.length === 0 ? (
+              <div className="empty-state">No files found in this folder.</div>
             ) : (
               <ul className="file-list">
+                {currentPrefix ? (
+                  <li className="file-row folder-row folder-up-row">
+                    <button
+                      className="folder-open-button"
+                      onClick={() => {
+                        const parts = currentPrefix.split('/').filter(Boolean);
+                        const parentPrefix = parts.length > 1 ? `${parts.slice(0, -1).join('/')}/` : '';
+                        loadFiles(parentPrefix, false, true, true);
+                      }}
+                      type="button"
+                    >
+                      <span className="folder-icon" aria-hidden="true">📁</span>
+                      <span className="folder-label">..</span>
+                    </button>
+                  </li>
+                ) : null}
+
+                {sortedFolders.map((folder) => (
+                  <li className="file-row folder-row" key={folder.key}>
+                    <button
+                      className="folder-open-button"
+                      onClick={() => loadFiles(folder.key, false, true, true)}
+                      type="button"
+                    >
+                      <span className="folder-icon" aria-hidden="true">📁</span>
+                      <span className="folder-label">{folder.name}</span>
+                      <span className="folder-path">{folder.path}</span>
+                    </button>
+                  </li>
+                ))}
+
                 {sortedFiles.map((file) => (
                   <li
                     className="file-row"
@@ -476,6 +562,11 @@ export default function App() {
                   onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
                 />
               </label>
+              {currentPrefix ? (
+                <div className="helper-text">Current folder: {displayPath(currentPrefix)}</div>
+              ) : (
+                <div className="helper-text">Current folder: /</div>
+              )}
               <button className="primary-button" type="submit" disabled={!selectedFile || uploading}>
                 {uploading ? 'Uploading...' : 'Upload'}
               </button>

@@ -39,8 +39,8 @@ The frontend is not part of Docker. It talks to the backend directly over HTTP.
 - `GET /api/` returns `{"status":"ok"}`
 - `GET /api/whoami` returns the current AWS caller identity
 - `GET /api/check_bucket` returns the configured bucket name
-- `GET /api/files` returns file items with key, name, path, size, and upload date
-- `POST /api/upload` uploads one multipart file
+- `GET /api/files?prefix=...` returns the current folder prefix plus immediate child folders and files
+- `POST /api/upload` uploads one multipart file, optionally into the provided folder prefix
 - `GET /api/files/{key:path}/download` returns a short-lived presigned download URL
 - `POST /api/files/{key:path}/rename` renames a file by copying to the corrected final name and deleting the original
 - `DELETE /api/files/{key}` deletes an object by key
@@ -71,6 +71,11 @@ Backend Docker dev run:
 - Every time a branch is switched or created, state the current branch afterward.
 - Dev containers should rely on the bind mount from `docker-compose.dev.yml`.
 - Keep generated cache and log files out of git.
+
+## S3 and API Permission
+- Ask for user permission before any S3 read, S3 write, or API call that reads from or writes to S3
+- Do not use the app API or direct AWS calls for live verification without user approval
+- Treat upload, delete, rename, download-link generation, and list checks against the real bucket as permission-gated actions
 
 ## Docker workflow & permission
 - Dev start: `docker compose -f docker-compose.dev.yml up`
@@ -109,6 +114,7 @@ Backend Docker dev run:
 - Use `head_object` only when a user opens a file detail view for fuller metadata
 - Rename should preserve the original extension even when the user omits it or types a different one
 - Add a trash feature similar to Google Drive so deleted files can be restored later
+- Keep folder browsing based on S3 prefixes and delimiters so deep nested paths continue to work
 
 ## Feature Tracking
 - Keep this file updated whenever a feature is added, removed, or merged

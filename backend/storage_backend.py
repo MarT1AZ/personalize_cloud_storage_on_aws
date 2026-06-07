@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import boto3
@@ -48,11 +48,30 @@ def current_bucket():
 
 
 @app.get("/api/files")
-def list_files():
-    response = s3.list_objects_v2(Bucket=BUCKET)
+def list_files(prefix: str = ""):
+    normalized_prefix = prefix.strip().lstrip("/")
+    if normalized_prefix and not normalized_prefix.endswith("/"):
+        normalized_prefix = f"{normalized_prefix}/"
 
-    return [
+    response = s3.list_objects_v2(
+        Bucket=BUCKET,
+        Prefix=normalized_prefix,
+        Delimiter="/",
+    )
+
+    folders = [
         {
+            "kind": "folder",
+            "key": folder["Prefix"],
+            "name": PurePosixPath(folder["Prefix"].rstrip("/")).name or folder["Prefix"].rstrip("/"),
+            "path": f'/{folder["Prefix"].lstrip("/")}',
+        }
+        for folder in response.get("CommonPrefixes", [])
+    ]
+
+    files = [
+        {
+            "kind": "file",
             "key": obj["Key"],
             "name": (PurePosixPath(obj["Key"]).name or obj["Key"]),
             "path": f'/{obj["Key"].lstrip("/")}',
@@ -60,22 +79,33 @@ def list_files():
             "upload_date": obj["LastModified"].isoformat() if obj.get("LastModified") else None,
         }
         for obj in response.get("Contents", [])
+        if obj["Key"] != normalized_prefix
     ]
+
+    return {
+        "prefix": normalized_prefix,
+        "folders": folders,
+        "files": files,
+    }
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)):
+async def upload(file: UploadFile = File(...), prefix: str = Form("")):
+    normalized_prefix = prefix.strip().lstrip("/")
+    if normalized_prefix and not normalized_prefix.endswith("/"):
+        normalized_prefix = f"{normalized_prefix}/"
+
     s3.upload_fileobj(
         file.file,
         BUCKET,
-        file.filename,
+        f"{normalized_prefix}{file.filename}",
         ExtraArgs={
             "ContentType": file.content_type,
         },
     )
 
     return {
-        "uploaded": file.filename,
+        "uploaded": f"{normalized_prefix}{file.filename}",
     }
 
 

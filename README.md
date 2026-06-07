@@ -3,7 +3,8 @@
 Simple personal cloud storage app with a React frontend and a FastAPI backend backed by one S3 bucket.
 
 ## Current Features
-- Fetch list of files
+- Browse folders and files
+- Open nested folders
 - Show an absolute path for each item
 - Show file name, size, and upload date for each item
 - Rename a file
