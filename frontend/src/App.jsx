@@ -113,18 +113,22 @@ export default function App() {
   const [editingKey, setEditingKey] = useState('');
   const [renameNotices, setRenameNotices] = useState({});
   const [recentRenames, setRecentRenames] = useState({});
+  const [recentDeletes, setRecentDeletes] = useState([]);
 
   const sortedFiles = useMemo(
     () => [...files].sort((a, b) => a.key.localeCompare(b.key)),
     [files],
   );
 
-  async function loadFiles(isManualRefresh = false, preserveRecentRenames = false) {
+  async function loadFiles(isManualRefresh = false, preserveRecentRenames = false, preserveRecentDeletes = false) {
     try {
       setError('');
       setSuccess('');
       if (isManualRefresh && !preserveRecentRenames) {
         setRecentRenames({});
+      }
+      if (isManualRefresh && !preserveRecentDeletes) {
+        setRecentDeletes([]);
       }
       if (isManualRefresh) {
         setRefreshing(true);
@@ -199,7 +203,11 @@ export default function App() {
       if (normalizeKey(deleteKey) === normalized) {
         setDeleteKey('');
       }
-      await loadFiles(true);
+      setRecentDeletes((current) => {
+        const next = [displayPath(normalized), ...current.filter((item) => item !== displayPath(normalized))];
+        return next.slice(0, 5);
+      });
+      await loadFiles(true, true, true);
     } catch (err) {
       setError(err.message || 'Delete failed');
     } finally {
@@ -274,7 +282,7 @@ export default function App() {
           message: `Renamed to ${displayPath(finalKey)}`,
         },
       }));
-      await loadFiles(true, true);
+      await loadFiles(true, true, true);
     } catch (err) {
       setRenameNotices((current) => ({
         ...current,
@@ -349,6 +357,16 @@ export default function App() {
 
         {error ? <div className="error-box">{error}</div> : null}
         {success ? <div className="success-box">{success}</div> : null}
+        {recentDeletes.length > 0 ? (
+          <div className="delete-history-box">
+            <div className="delete-history-title">Recently deleted</div>
+            <div className="delete-history-list">
+              {recentDeletes.map((item) => (
+                <div className="delete-tag" key={item}>{item}</div>
+              ))}
+            </div>
+          </div>
+        ) : null}
 
         {loading ? (
           <div className="empty-state">Loading files...</div>

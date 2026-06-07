@@ -314,6 +314,40 @@ input[type="file"]::file-selector-button {
   color: #fecdd3;
 }
 
+.delete-history-box {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #27141a;
+  border: 1px solid #7f3143;
+}
+
+.delete-history-title {
+  color: #fecdd3;
+  font-size: 0.85rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.delete-history-list {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.delete-tag {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #4a1823;
+  border: 1px solid #9f3d55;
+  color: #fecdd3;
+  font-size: 0.8rem;
+  line-height: 1.2;
+  word-break: break-word;
+}
+
 .file-detail {
   min-width: 0;
 }

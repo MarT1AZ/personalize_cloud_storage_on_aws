@@ -108,6 +108,7 @@ Backend Docker dev run:
 - `backend/run.txt` contains older example commands and sensitive-looking values, so treat it carefully
 - Use `head_object` only when a user opens a file detail view for fuller metadata
 - Rename should preserve the original extension even when the user omits it or types a different one
+- Add a trash feature similar to Google Drive so deleted files can be restored later
 
 ## Feature Tracking
 - Keep this file updated whenever a feature is added, removed, or merged

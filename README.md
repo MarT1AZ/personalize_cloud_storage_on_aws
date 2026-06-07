@@ -10,4 +10,5 @@ Simple personal cloud storage app with a React frontend and a FastAPI backend ba
 - Keep the original file extension during rename
 - Delete by path
 - Delete on item card
+- Show a recent deletion alert
 - Upload file
