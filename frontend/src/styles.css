@@ -43,9 +43,9 @@ button:not(:disabled):active {
 }
 
 .app-shell {
-  max-width: 980px;
+  width: min(1680px, calc(100vw - 48px));
   margin: 0 auto;
-  padding: 32px 20px 48px;
+  padding: 32px 0 48px;
 }
 
 .header-row {
@@ -83,6 +83,39 @@ h1 {
   margin-bottom: 14px;
 }
 
+.workspace-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.75fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.main-column,
+.side-column {
+  min-width: 0;
+}
+
+.panel-main {
+  min-height: calc(100vh - 180px);
+}
+
+.side-column {
+  display: grid;
+  gap: 14px;
+}
+
+.side-panel {
+  margin-bottom: 0;
+}
+
+.panel-muted {
+  background: linear-gradient(180deg, #111824 0%, #0d141f 100%);
+}
+
+.panel-note {
+  margin: 0;
+}
+
 .section-head {
   display: flex;
   align-items: center;
@@ -106,6 +139,11 @@ h1 {
   gap: 12px;
   align-items: end;
   flex-wrap: wrap;
+}
+
+.stack-form {
+  display: grid;
+  gap: 12px;
 }
 
 .field {
@@ -367,7 +405,22 @@ input[type="file"]::file-selector-button {
   word-break: break-word;
 }
 
+@media (max-width: 1080px) {
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .panel-main {
+    min-height: auto;
+  }
+}
+
 @media (max-width: 640px) {
+  .app-shell {
+    width: calc(100vw - 24px);
+    padding: 24px 0 36px;
+  }
+
   .header-row,
   .section-head,
   .file-row {

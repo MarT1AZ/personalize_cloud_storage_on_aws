@@ -309,195 +309,211 @@ export default function App() {
         </button>
       </section>
 
-      <section className="panel">
-        <form className="form-row" onSubmit={handleUpload}>
-          <label className="field">
-            <span>Upload file</span>
-            <input
-              type="file"
-              onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
-            />
-          </label>
-          <button className="primary-button" type="submit" disabled={!selectedFile || uploading}>
-            {uploading ? 'Uploading...' : 'Upload'}
-          </button>
-        </form>
-      </section>
-
-      <section className="panel">
-        <div className="section-head">
-          <h2>Delete by path or name</h2>
-        </div>
-        <div className="form-row">
-          <label className="field grow">
-            <span>Object key</span>
-            <input
-              type="text"
-              value={deleteKey}
-              onChange={(event) => setDeleteKey(event.target.value)}
-              placeholder="folder/file.txt"
-            />
-          </label>
-          <button
-            className="danger-button"
-            onClick={() => handleDelete(deleteKey)}
-            disabled={!normalizeKey(deleteKey) || deleting}
-            type="button"
-          >
-            {deleting && normalizeKey(deleteKey) === deleting ? 'Deleting...' : 'Delete'}
-          </button>
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="section-head">
-          <h2>Objects</h2>
-          <span className="count">{sortedFiles.length} items</span>
-        </div>
-
-        {error ? <div className="error-box">{error}</div> : null}
-        {success ? <div className="success-box">{success}</div> : null}
-        {recentDeletes.length > 0 ? (
-          <div className="delete-history-box">
-            <div className="delete-history-title">Recently deleted</div>
-            <div className="delete-history-list">
-              {recentDeletes.map((item) => (
-                <div className="delete-tag" key={item}>{item}</div>
-              ))}
+      <section className="workspace-grid">
+        <div className="main-column">
+          <section className="panel panel-main">
+            <div className="section-head">
+              <h2>Objects</h2>
+              <span className="count">{sortedFiles.length} items</span>
             </div>
-          </div>
-        ) : null}
 
-        {loading ? (
-          <div className="empty-state">Loading files...</div>
-        ) : sortedFiles.length === 0 ? (
-          <div className="empty-state">No files found.</div>
-        ) : (
-          <ul className="file-list">
-            {sortedFiles.map((file) => (
-              <li
-                className="file-row"
-                key={file.key}
-                data-file-key={file.key}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  if (file.key.endsWith('/')) return;
-                  setActionMenuKey((current) => (current === file.key ? '' : file.key));
-                }}
-              >
-                <div className="file-meta">
-                  <div className="file-name-row">
-                    <div className="file-name">{file.name || 'Unnamed file'}</div>
-                    {recentRenames[file.key] ? (
-                      <div className="rename-tag">
-                        {recentRenames[file.key].oldName} {'>>'} {recentRenames[file.key].newName}
+            {error ? <div className="error-box">{error}</div> : null}
+            {success ? <div className="success-box">{success}</div> : null}
+            {recentDeletes.length > 0 ? (
+              <div className="delete-history-box">
+                <div className="delete-history-title">Recently deleted</div>
+                <div className="delete-history-list">
+                  {recentDeletes.map((item) => (
+                    <div className="delete-tag" key={item}>{item}</div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {loading ? (
+              <div className="empty-state">Loading files...</div>
+            ) : sortedFiles.length === 0 ? (
+              <div className="empty-state">No files found.</div>
+            ) : (
+              <ul className="file-list">
+                {sortedFiles.map((file) => (
+                  <li
+                    className="file-row"
+                    key={file.key}
+                    data-file-key={file.key}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      if (file.key.endsWith('/')) return;
+                      setActionMenuKey((current) => (current === file.key ? '' : file.key));
+                    }}
+                  >
+                    <div className="file-meta">
+                      <div className="file-name-row">
+                        <div className="file-name">{file.name || 'Unnamed file'}</div>
+                        {recentRenames[file.key] ? (
+                          <div className="rename-tag">
+                            {recentRenames[file.key].oldName} {'>>'} {recentRenames[file.key].newName}
+                          </div>
+                        ) : null}
                       </div>
-                    ) : null}
-                  </div>
-                  <div className="file-path">{file.path || displayPath(file.key)}</div>
-                  <dl className="file-details">
-                    <div className="file-detail">
-                      <dt>Size</dt>
-                      <dd>{formatBytes(file.size)}</dd>
-                    </div>
-                    <div className="file-detail">
-                      <dt>Upload date</dt>
-                      <dd>{formatDateTime(file.upload_date)}</dd>
-                    </div>
-                  </dl>
-                  {!file.key.endsWith('/') && actionMenuKey === file.key ? (
-                    <div className="action-menu">
-                      <button
-                        className="secondary-button"
-                        onClick={() => {
-                          setEditingKey(file.key);
-                          setActionMenuKey('');
-                        }}
-                        type="button"
-                      >
-                        Rename
-                      </button>
-                    </div>
-                  ) : null}
-                  {!file.key.endsWith('/') && editingKey === file.key ? (
-                    <div className="rename-box">
-                      <label className="field grow">
-                        <span>Rename file</span>
-                        <input
-                          type="text"
-                          value={renameDrafts[file.key] || ''}
-                          onChange={(event) => setRenameDrafts((current) => ({
-                            ...current,
-                            [file.key]: event.target.value,
-                          }))}
-                          placeholder="new-file-name"
-                        />
-                      </label>
-                      <div className="rename-preview">
-                        Final name: {displayPath(getRenamedKey(file.key, renameDrafts[file.key] || '')) || 'Enter a new name'}
-                      </div>
-                      {renameNotices[file.key] ? (
-                        <div className={renameNotices[file.key].type === 'success' ? 'inline-success-box' : 'inline-error-box'}>
-                          {renameNotices[file.key].message}
+                      <div className="file-path">{file.path || displayPath(file.key)}</div>
+                      <dl className="file-details">
+                        <div className="file-detail">
+                          <dt>Size</dt>
+                          <dd>{formatBytes(file.size)}</dd>
+                        </div>
+                        <div className="file-detail">
+                          <dt>Upload date</dt>
+                          <dd>{formatDateTime(file.upload_date)}</dd>
+                        </div>
+                      </dl>
+                      {!file.key.endsWith('/') && actionMenuKey === file.key ? (
+                        <div className="action-menu">
+                          <button
+                            className="secondary-button"
+                            onClick={() => {
+                              setEditingKey(file.key);
+                              setActionMenuKey('');
+                            }}
+                            type="button"
+                          >
+                            Rename
+                          </button>
                         </div>
                       ) : null}
-                      <div className="rename-actions">
-                        <button
-                          className="secondary-button"
-                          onClick={() => handleRename(file)}
-                          disabled={!getRenamedKey(file.key, renameDrafts[file.key] || '') || renaming === file.key}
-                          type="button"
-                        >
-                          {renaming === file.key ? 'Renaming...' : 'Rename'}
-                        </button>
+                      {!file.key.endsWith('/') && editingKey === file.key ? (
+                        <div className="rename-box">
+                          <label className="field grow">
+                            <span>Rename file</span>
+                            <input
+                              type="text"
+                              value={renameDrafts[file.key] || ''}
+                              onChange={(event) => setRenameDrafts((current) => ({
+                                ...current,
+                                [file.key]: event.target.value,
+                              }))}
+                              placeholder="new-file-name"
+                            />
+                          </label>
+                          <div className="rename-preview">
+                            Final name: {displayPath(getRenamedKey(file.key, renameDrafts[file.key] || '')) || 'Enter a new name'}
+                          </div>
+                          {renameNotices[file.key] ? (
+                            <div className={renameNotices[file.key].type === 'success' ? 'inline-success-box' : 'inline-error-box'}>
+                              {renameNotices[file.key].message}
+                            </div>
+                          ) : null}
+                          <div className="rename-actions">
+                            <button
+                              className="secondary-button"
+                              onClick={() => handleRename(file)}
+                              disabled={!getRenamedKey(file.key, renameDrafts[file.key] || '') || renaming === file.key}
+                              type="button"
+                            >
+                              {renaming === file.key ? 'Renaming...' : 'Rename'}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              onClick={() => {
+                                setEditingKey('');
+                                setRenameNotices((current) => ({
+                                  ...current,
+                                  [file.key]: null,
+                                }));
+                              }}
+                              type="button"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="row-actions">
+                      {!file.key.endsWith('/') ? (
                         <button
                           className="ghost-button"
-                          onClick={() => {
-                            setEditingKey('');
-                            setRenameNotices((current) => ({
-                              ...current,
-                              [file.key]: null,
-                            }));
-                          }}
+                          onClick={() => setActionMenuKey((current) => (current === file.key ? '' : file.key))}
                           type="button"
                         >
-                          Cancel
+                          Actions
                         </button>
-                      </div>
+                      ) : null}
+                      <button
+                        className="secondary-button"
+                        onClick={() => handleDownload(file.key)}
+                        disabled={downloading === file.key}
+                        type="button"
+                      >
+                        {downloading === file.key ? 'Preparing...' : 'Download'}
+                      </button>
+                      <button
+                        className="ghost-button"
+                        onClick={() => handleDelete(file.key)}
+                        disabled={deleting === file.key}
+                        type="button"
+                      >
+                        {deleting === file.key ? 'Deleting...' : 'Delete'}
+                      </button>
                     </div>
-                  ) : null}
-                </div>
-                <div className="row-actions">
-                  {!file.key.endsWith('/') ? (
-                    <button
-                      className="ghost-button"
-                      onClick={() => setActionMenuKey((current) => (current === file.key ? '' : file.key))}
-                      type="button"
-                    >
-                      Actions
-                    </button>
-                  ) : null}
-                  <button
-                    className="secondary-button"
-                    onClick={() => handleDownload(file.key)}
-                    disabled={downloading === file.key}
-                    type="button"
-                  >
-                    {downloading === file.key ? 'Preparing...' : 'Download'}
-                  </button>
-                  <button
-                    className="ghost-button"
-                    onClick={() => handleDelete(file.key)}
-                    disabled={deleting === file.key}
-                    type="button"
-                  >
-                    {deleting === file.key ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        </div>
+
+        <aside className="side-column">
+          <section className="panel side-panel">
+            <div className="section-head">
+              <h2>Upload</h2>
+            </div>
+            <form className="stack-form" onSubmit={handleUpload}>
+              <label className="field">
+                <span>Select file</span>
+                <input
+                  type="file"
+                  onChange={(event) => setSelectedFile(event.target.files?.[0] || null)}
+                />
+              </label>
+              <button className="primary-button" type="submit" disabled={!selectedFile || uploading}>
+                {uploading ? 'Uploading...' : 'Upload'}
+              </button>
+            </form>
+          </section>
+
+          <section className="panel side-panel">
+            <div className="section-head">
+              <h2>Delete by path</h2>
+            </div>
+            <div className="stack-form">
+              <label className="field">
+                <span>Object key</span>
+                <input
+                  type="text"
+                  value={deleteKey}
+                  onChange={(event) => setDeleteKey(event.target.value)}
+                  placeholder="folder/file.txt"
+                />
+              </label>
+              <button
+                className="danger-button"
+                onClick={() => handleDelete(deleteKey)}
+                disabled={!normalizeKey(deleteKey) || deleting}
+                type="button"
+              >
+                {deleting && normalizeKey(deleteKey) === deleting ? 'Deleting...' : 'Delete'}
+              </button>
+            </div>
+          </section>
+
+          <section className="panel side-panel panel-muted">
+            <div className="section-head">
+              <h2>Coming Next</h2>
+            </div>
+            <p className="subtle panel-note">This side area is reserved for future tools like trash, filters, and richer file details.</p>
+          </section>
+        </aside>
       </section>
     </main>
   );
