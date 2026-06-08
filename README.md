@@ -6,11 +6,13 @@ The backend source now lives under `backend/app/` so the dev container can bind-
 
 ## Current Features
 - Browse folders and files
+- Create folders
 - Open nested folders
 - Show an absolute path for each item
 - Show file name, size, and upload date for each item
 - Rename a file
 - Keep the original file extension during rename
+- Enable trash mode to delete files and folders from the list
 - Delete by path
 - Delete on item card
 - Show a recent deletion alert

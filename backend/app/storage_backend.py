@@ -24,6 +24,11 @@ class RenameRequest(BaseModel):
     new_name: str
 
 
+class CreateFolderRequest(BaseModel):
+    name: str
+    prefix: str = ""
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,
@@ -111,6 +116,23 @@ async def upload(file: UploadFile = File(...), prefix: str = Form("")):
 
 
 def delete_key(key: str):
+    if key.endswith("/"):
+        response = s3.list_objects_v2(
+            Bucket=BUCKET,
+            Prefix=key,
+            Delimiter="/",
+        )
+
+        direct_files = [
+            item
+            for item in response.get("Contents", [])
+            if item["Key"] != key
+        ]
+        direct_folders = response.get("CommonPrefixes", [])
+
+        if direct_files or direct_folders:
+            raise HTTPException(status_code=400, detail="Folder is not empty")
+
     s3.delete_object(
         Bucket=BUCKET,
         Key=key,
@@ -137,6 +159,18 @@ def build_renamed_key(key: str, new_name: str):
         return final_name
 
     return source_path.parent.joinpath(final_name).as_posix()
+
+
+def build_folder_key(prefix: str, name: str):
+    normalized_prefix = prefix.strip().lstrip("/")
+    if normalized_prefix and not normalized_prefix.endswith("/"):
+        normalized_prefix = f"{normalized_prefix}/"
+
+    normalized_name = name.strip().strip("/")
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="Folder name is required")
+
+    return f"{normalized_prefix}{normalized_name}/"
 
 
 @app.get("/api/files/{key:path}/download")
@@ -180,6 +214,21 @@ def rename_file(key: str, request: RenameRequest):
     return {
         "source_key": key,
         "renamed_key": final_key,
+    }
+
+
+@app.post("/api/folders")
+def create_folder(request: CreateFolderRequest):
+    folder_key = build_folder_key(request.prefix, request.name)
+
+    s3.put_object(
+        Bucket=BUCKET,
+        Key=folder_key,
+        Body=b"",
+    )
+
+    return {
+        "created_folder": folder_key,
     }
 
 

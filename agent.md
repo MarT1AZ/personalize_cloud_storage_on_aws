@@ -40,10 +40,11 @@ The frontend is not part of Docker. It talks to the backend directly over HTTP.
 - `GET /api/whoami` returns the current AWS caller identity
 - `GET /api/check_bucket` returns the configured bucket name
 - `GET /api/files?prefix=...` returns the current folder prefix plus immediate child folders and files
+- `POST /api/folders` creates a folder inside the provided prefix
 - `POST /api/upload` uploads one multipart file, optionally into the provided folder prefix
 - `GET /api/files/{key:path}/download` returns a short-lived presigned download URL
 - `POST /api/files/{key:path}/rename` renames a file by copying to the corrected final name and deleting the original
-- `DELETE /api/files/{key}` deletes an object by key
+- `DELETE /api/files/{key}` deletes a file, or deletes a folder only when it is empty
 - `DELETE /api/delete?key=...` is an alias for delete by query string
 
 ## How To Run

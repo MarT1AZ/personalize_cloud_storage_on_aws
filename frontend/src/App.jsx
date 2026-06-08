@@ -19,6 +19,15 @@ function normalizePrefix(value) {
   return normalized.endsWith('/') ? normalized : `${normalized}/`;
 }
 
+function buildFolderPreview(prefix, rawName) {
+  const normalizedPrefix = normalizePrefix(prefix);
+  const normalizedName = normalizeKey(rawName).replace(/\/+$/, '');
+  if (!normalizedName) {
+    return normalizedPrefix;
+  }
+  return `${normalizedPrefix}${normalizedName}/`;
+}
+
 function getFileExtension(key) {
   const name = key.split('/').pop() || '';
   const dotIndex = name.lastIndexOf('.');
@@ -114,7 +123,11 @@ export default function App() {
   const [success, setSuccess] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [folderName, setFolderName] = useState('');
+  const [creatingFolder, setCreatingFolder] = useState(false);
   const [deleteKey, setDeleteKey] = useState('');
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [deleteConfirmKey, setDeleteConfirmKey] = useState('');
   const [deleting, setDeleting] = useState('');
   const [downloading, setDownloading] = useState('');
   const [renameDrafts, setRenameDrafts] = useState({});
@@ -248,8 +261,10 @@ export default function App() {
         const next = [displayPath(normalized), ...current.filter((item) => item !== displayPath(normalized))];
         return next.slice(0, 5);
       });
+      setDeleteConfirmKey('');
       await loadFiles(currentPrefix, true, true, true);
     } catch (err) {
+      setDeleteConfirmKey('');
       setError(err.message || 'Delete failed');
     } finally {
       setDeleting('');
@@ -279,6 +294,31 @@ export default function App() {
       setError(err.message || 'Download failed');
     } finally {
       setDownloading('');
+    }
+  }
+
+  async function handleCreateFolder(event) {
+    event.preventDefault();
+    if (!normalizeKey(folderName)) return;
+
+    try {
+      setError('');
+      setSuccess('');
+      setCreatingFolder(true);
+      const data = await api('/folders', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: folderName,
+          prefix: currentPrefix,
+        }),
+      });
+      setFolderName('');
+      setSuccess(`Created folder ${displayPath(data?.created_folder || buildFolderPreview(currentPrefix, folderName))}`);
+      await loadFiles(currentPrefix, true, true, true);
+    } catch (err) {
+      setError(err.message || 'Folder creation failed');
+    } finally {
+      setCreatingFolder(false);
     }
   }
 
@@ -345,9 +385,21 @@ export default function App() {
           <h1>Files</h1>
           <p className="subtle">Browse folders, open nested paths, and manage files from one simple screen.</p>
         </div>
-        <button className="secondary-button" onClick={() => loadFiles(currentPrefix, true)} disabled={refreshing || loading}>
-          {refreshing ? 'Refreshing...' : 'Refresh'}
-        </button>
+        <div className="header-actions">
+          <button
+            className={deleteMode ? 'danger-button' : 'secondary-button'}
+            onClick={() => {
+              setDeleteMode((current) => !current);
+              setDeleteConfirmKey('');
+            }}
+            type="button"
+          >
+            {deleteMode ? 'Exit Trash' : 'Trash'}
+          </button>
+          <button className="secondary-button" onClick={() => loadFiles(currentPrefix, true)} disabled={refreshing || loading}>
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
       </section>
 
       <section className="workspace-grid">
@@ -410,15 +462,48 @@ export default function App() {
 
                 {sortedFolders.map((folder) => (
                   <li className="file-row folder-row" key={folder.key}>
-                    <button
-                      className="folder-open-button"
-                      onClick={() => loadFiles(folder.key, false, true, true)}
-                      type="button"
-                    >
-                      <span className="folder-icon" aria-hidden="true">📁</span>
-                      <span className="folder-label">{folder.name}</span>
-                      <span className="folder-path">{folder.path}</span>
-                    </button>
+                    <div className="folder-row-shell">
+                      <button
+                        className="folder-open-button"
+                        onClick={() => loadFiles(folder.key, false, true, true)}
+                        type="button"
+                      >
+                        <span className="folder-icon" aria-hidden="true">📁</span>
+                        <span className="folder-label">{folder.name}</span>
+                        <span className="folder-path">{folder.path}</span>
+                      </button>
+                      {deleteMode ? (
+                        <div className="row-actions">
+                          {deleteConfirmKey === folder.key ? (
+                            <>
+                              <button
+                                className="danger-button"
+                                onClick={() => handleDelete(folder.key)}
+                                disabled={deleting === folder.key}
+                                type="button"
+                              >
+                                {deleting === folder.key ? 'Deleting...' : 'Confirm'}
+                              </button>
+                              <button
+                                className="ghost-button"
+                                onClick={() => setDeleteConfirmKey('')}
+                                type="button"
+                              >
+                                Cancel
+                              </button>
+                            </>
+                          ) : (
+                            <button
+                              className="danger-button"
+                              onClick={() => setDeleteConfirmKey(folder.key)}
+                              type="button"
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
+                      ) : null}
+                    </div>
                   </li>
                 ))}
 
@@ -516,6 +601,35 @@ export default function App() {
                       ) : null}
                     </div>
                     <div className="row-actions">
+                      {deleteMode ? (
+                        deleteConfirmKey === file.key ? (
+                          <>
+                            <button
+                              className="danger-button"
+                              onClick={() => handleDelete(file.key)}
+                              disabled={deleting === file.key}
+                              type="button"
+                            >
+                              {deleting === file.key ? 'Deleting...' : 'Confirm'}
+                            </button>
+                            <button
+                              className="ghost-button"
+                              onClick={() => setDeleteConfirmKey('')}
+                              type="button"
+                            >
+                              Cancel
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            className="danger-button"
+                            onClick={() => setDeleteConfirmKey(file.key)}
+                            type="button"
+                          >
+                            Delete
+                          </button>
+                        )
+                      ) : null}
                       {!file.key.endsWith('/') ? (
                         <button
                           className="ghost-button"
@@ -550,6 +664,29 @@ export default function App() {
         </div>
 
         <aside className="side-column">
+          <section className="panel side-panel">
+            <div className="section-head">
+              <h2>Create folder</h2>
+            </div>
+            <form className="stack-form" onSubmit={handleCreateFolder}>
+              <label className="field">
+                <span>Folder name</span>
+                <input
+                  type="text"
+                  value={folderName}
+                  onChange={(event) => setFolderName(event.target.value)}
+                  placeholder="new-folder"
+                />
+              </label>
+              <div className="helper-text">
+                Final folder: {displayPath(buildFolderPreview(currentPrefix, folderName)) || '/'}
+              </div>
+              <button className="primary-button" type="submit" disabled={!normalizeKey(folderName) || creatingFolder}>
+                {creatingFolder ? 'Creating...' : 'Create folder'}
+              </button>
+            </form>
+          </section>
+
           <section className="panel side-panel">
             <div className="section-head">
               <h2>Upload</h2>

@@ -56,6 +56,12 @@ button:not(:disabled):active {
   margin-bottom: 20px;
 }
 
+.header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 .eyebrow {
   margin: 0 0 8px;
   color: #8fa3b8;
@@ -285,6 +291,14 @@ input[type="file"]::file-selector-button {
   padding: 0;
 }
 
+.folder-row-shell {
+  width: 100%;
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  padding: 12px;
+}
+
 .folder-open-button {
   width: 100%;
   min-height: 72px;
@@ -490,14 +504,17 @@ input[type="file"]::file-selector-button {
     padding: 24px 0 36px;
   }
 
+  .header-actions,
   .header-row,
   .section-head,
   .file-row {
     align-items: stretch;
   }
 
+  .header-actions,
   .header-row,
   .form-row,
+  .folder-row-shell,
   .file-row,
   .row-actions {
     flex-direction: column;
