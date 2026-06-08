@@ -1,9 +1,10 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import boto3
 import os
-from pathlib import PurePosixPath
+
+from app.services.s3_storage_service import S3StorageService
 
 app = FastAPI()
 
@@ -17,7 +18,7 @@ CORS_ORIGINS = [
     if origin.strip()
 ]
 
-s3 = boto3.client("s3")
+storage_service = S3StorageService(BUCKET)
 
 
 class RenameRequest(BaseModel):
@@ -55,188 +56,34 @@ def current_bucket():
 
 @app.get("/api/files")
 def list_files(prefix: str = ""):
-    normalized_prefix = prefix.strip().lstrip("/")
-    if normalized_prefix and not normalized_prefix.endswith("/"):
-        normalized_prefix = f"{normalized_prefix}/"
-
-    response = s3.list_objects_v2(
-        Bucket=BUCKET,
-        Prefix=normalized_prefix,
-        Delimiter="/",
-    )
-
-    folders = [
-        {
-            "kind": "folder",
-            "key": folder["Prefix"],
-            "name": PurePosixPath(folder["Prefix"].rstrip("/")).name or folder["Prefix"].rstrip("/"),
-            "path": f'/{folder["Prefix"].lstrip("/")}',
-        }
-        for folder in response.get("CommonPrefixes", [])
-    ]
-
-    files = [
-        {
-            "kind": "file",
-            "key": obj["Key"],
-            "name": (PurePosixPath(obj["Key"]).name or obj["Key"]),
-            "path": f'/{obj["Key"].lstrip("/")}',
-            "size": obj.get("Size"),
-            "upload_date": obj["LastModified"].isoformat() if obj.get("LastModified") else None,
-        }
-        for obj in response.get("Contents", [])
-        if obj["Key"] != normalized_prefix
-    ]
-
-    return {
-        "prefix": normalized_prefix,
-        "folders": folders,
-        "files": files,
-    }
+    return storage_service.list_files(prefix)
 
 
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...), prefix: str = Form("")):
-    normalized_prefix = prefix.strip().lstrip("/")
-    if normalized_prefix and not normalized_prefix.endswith("/"):
-        normalized_prefix = f"{normalized_prefix}/"
-
-    s3.upload_fileobj(
-        file.file,
-        BUCKET,
-        f"{normalized_prefix}{file.filename}",
-        ExtraArgs={
-            "ContentType": file.content_type,
-        },
-    )
-
-    return {
-        "uploaded": f"{normalized_prefix}{file.filename}",
-    }
-
-
-def delete_key(key: str):
-    if key.endswith("/"):
-        response = s3.list_objects_v2(
-            Bucket=BUCKET,
-            Prefix=key,
-            Delimiter="/",
-        )
-
-        direct_files = [
-            item
-            for item in response.get("Contents", [])
-            if item["Key"] != key
-        ]
-        direct_folders = response.get("CommonPrefixes", [])
-
-        if direct_files or direct_folders:
-            raise HTTPException(status_code=400, detail="Folder is not empty")
-
-    s3.delete_object(
-        Bucket=BUCKET,
-        Key=key,
-    )
-
-    return {
-        "deleted": key,
-    }
-
-
-def build_renamed_key(key: str, new_name: str):
-    if key.endswith("/"):
-        raise HTTPException(status_code=400, detail="Folders cannot be renamed from this view")
-
-    normalized_name = new_name.strip().lstrip("/")
-    if not normalized_name:
-        raise HTTPException(status_code=400, detail="New name is required")
-
-    source_path = PurePosixPath(key)
-    extension = source_path.suffix
-    final_name = normalized_name if not extension or normalized_name.endswith(extension) else f"{normalized_name}{extension}"
-
-    if str(source_path.parent) == ".":
-        return final_name
-
-    return source_path.parent.joinpath(final_name).as_posix()
-
-
-def build_folder_key(prefix: str, name: str):
-    normalized_prefix = prefix.strip().lstrip("/")
-    if normalized_prefix and not normalized_prefix.endswith("/"):
-        normalized_prefix = f"{normalized_prefix}/"
-
-    normalized_name = name.strip().strip("/")
-    if not normalized_name:
-        raise HTTPException(status_code=400, detail="Folder name is required")
-
-    return f"{normalized_prefix}{normalized_name}/"
+    return storage_service.upload_file(file, prefix)
 
 
 @app.get("/api/files/{key:path}/download")
 def get_download_url(key: str):
-    filename = PurePosixPath(key).name or "download"
-    url = s3.generate_presigned_url(
-        "get_object",
-        Params={
-            "Bucket": BUCKET,
-            "Key": key,
-            "ResponseContentDisposition": f'attachment; filename="{filename}"',
-        },
-        ExpiresIn=60,
-    )
-
-    return {
-        "key": key,
-        "url": url,
-        "expires_in": 60,
-    }
+    return storage_service.get_download_url(key)
 
 
 @app.post("/api/files/{key:path}/rename")
 def rename_file(key: str, request: RenameRequest):
-    final_key = build_renamed_key(key, request.new_name)
-
-    if final_key != key:
-        s3.copy_object(
-            Bucket=BUCKET,
-            CopySource={
-                "Bucket": BUCKET,
-                "Key": key,
-            },
-            Key=final_key,
-        )
-        s3.delete_object(
-            Bucket=BUCKET,
-            Key=key,
-        )
-
-    return {
-        "source_key": key,
-        "renamed_key": final_key,
-    }
+    return storage_service.rename_file(key, request.new_name)
 
 
 @app.post("/api/folders")
 def create_folder(request: CreateFolderRequest):
-    folder_key = build_folder_key(request.prefix, request.name)
-
-    s3.put_object(
-        Bucket=BUCKET,
-        Key=folder_key,
-        Body=b"",
-    )
-
-    return {
-        "created_folder": folder_key,
-    }
+    return storage_service.create_folder(request.prefix, request.name)
 
 
 @app.delete("/api/files/{key:path}")
 def delete_file(key: str):
-    return delete_key(key)
+    return storage_service.delete_key(key)
 
 
 @app.delete("/api/delete")
 def delete_file_alias(key: str):
-    return delete_key(key)
+    return storage_service.delete_key(key)

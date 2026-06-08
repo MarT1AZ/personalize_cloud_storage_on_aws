@@ -9,6 +9,7 @@ The frontend is run locally with Node/Vite. The backend is run with Docker.
 
 ## Current Structure
 - Backend app: `backend/app/storage_backend.py`
+- Backend S3 service: `backend/app/services/s3_storage_service.py`
 - Backend production image: `backend/dockerfile`
 - Backend dev image: `backend/Dockerfile.dev`
 - Backend dependencies: `backend/requirements.txt`
@@ -27,6 +28,7 @@ The frontend is run locally with Node/Vite. The backend is run with Docker.
 - Optional environment variable: `CORS_ORIGINS`
 
 The backend creates an S3 client with the normal AWS credential chain. In this repo, Docker mounts the local AWS credentials directory into the container read-only.
+The route file should stay focused on request models and API handlers, while shared S3 behavior lives in the service layer.
 
 ## Frontend Summary
 - Stack: React with Vite
@@ -117,6 +119,7 @@ Backend Docker dev run:
 - Add a trash feature similar to Google Drive so deleted files can be restored later
 - Keep folder browsing based on S3 prefixes and delimiters so deep nested paths continue to work
 - Keep search and sort in the current folder view based on the existing `list_objects_v2` response unless the user explicitly asks for deeper metadata
+- Large file renames may take longer, so the UI should make that delay clear during the rename flow
 
 ## Feature Tracking
 - Keep this file updated whenever a feature is added, removed, or merged
