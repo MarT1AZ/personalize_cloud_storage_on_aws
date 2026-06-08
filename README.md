@@ -6,6 +6,9 @@ The backend source now lives under `backend/app/` so the dev container can bind-
 
 ## Current Features
 - Browse folders and files
+- Search items in the current folder by keyword
+- Sort items by alphabet or last modified time
+- Switch between folder-first and file-first ordering
 - Create folders
 - Open nested folders
 - Show an absolute path for each item

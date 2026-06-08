@@ -22,7 +22,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -140,6 +141,17 @@ h1 {
   font-size: 0.9rem;
 }
 
+.list-controls {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.6fr) repeat(2, minmax(180px, 0.8fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.control-field {
+  min-width: 0;
+}
+
 .breadcrumbs {
   display: flex;
   gap: 8px;
@@ -196,13 +208,18 @@ h1 {
 }
 
 input[type="file"],
-input[type="text"] {
+input[type="text"],
+select {
   width: 100%;
   border: 1px solid #2a3850;
   border-radius: 8px;
   background: #0c121b;
   color: #e8eef6;
   padding: 11px 12px;
+}
+
+select {
+  appearance: none;
 }
 
 input[type="file"]::file-selector-button {
@@ -496,6 +513,10 @@ input[type="file"]::file-selector-button {
   .panel-main {
     min-height: auto;
   }
+
+  .list-controls {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 @media (max-width: 640px) {
@@ -525,6 +546,10 @@ input[type="file"]::file-selector-button {
   .danger-button,
   .ghost-button {
     width: 100%;
+  }
+
+  .list-controls {
+    grid-template-columns: 1fr;
   }
 
   .file-details {

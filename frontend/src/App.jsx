@@ -85,6 +85,47 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function sortItems(items, sortMode) {
+  function compareAlphabet(left, right, direction = 'asc') {
+    const leftValue = left.name || left.path || left.key;
+    const rightValue = right.name || right.path || right.key;
+    const result = leftValue.localeCompare(rightValue, undefined, { sensitivity: 'base' });
+    return direction === 'desc' ? result * -1 : result;
+  }
+
+  function compareModified(left, right, direction = 'newest') {
+    const leftTime = left.upload_date ? Date.parse(left.upload_date) : Number.NaN;
+    const rightTime = right.upload_date ? Date.parse(right.upload_date) : Number.NaN;
+    const leftHasTime = Number.isFinite(leftTime);
+    const rightHasTime = Number.isFinite(rightTime);
+
+    if (leftHasTime && rightHasTime) {
+      if (leftTime !== rightTime) {
+        return direction === 'oldest' ? leftTime - rightTime : rightTime - leftTime;
+      }
+      return compareAlphabet(left, right, 'asc');
+    }
+
+    if (leftHasTime) return -1;
+    if (rightHasTime) return 1;
+    return compareAlphabet(left, right, 'asc');
+  }
+
+  const nextItems = [...items];
+
+  if (sortMode === 'alpha-desc') {
+    nextItems.sort((left, right) => compareAlphabet(left, right, 'desc'));
+  } else if (sortMode === 'modified-newest') {
+    nextItems.sort((left, right) => compareModified(left, right, 'newest'));
+  } else if (sortMode === 'modified-oldest') {
+    nextItems.sort((left, right) => compareModified(left, right, 'oldest'));
+  } else {
+    nextItems.sort((left, right) => compareAlphabet(left, right, 'asc'));
+  }
+
+  return nextItems;
+}
+
 async function readResponse(response) {
   const contentType = response.headers.get('content-type') || '';
   if (contentType.includes('application/json')) {
@@ -117,6 +158,9 @@ export default function App() {
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
   const [currentPrefix, setCurrentPrefix] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [sortMode, setSortMode] = useState('alpha-asc');
+  const [groupMode, setGroupMode] = useState('folder-first');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
@@ -138,16 +182,6 @@ export default function App() {
   const [recentRenames, setRecentRenames] = useState({});
   const [recentDeletes, setRecentDeletes] = useState([]);
 
-  const sortedFolders = useMemo(
-    () => [...folders].sort((a, b) => a.path.localeCompare(b.path)),
-    [folders],
-  );
-
-  const sortedFiles = useMemo(
-    () => [...files].sort((a, b) => a.path.localeCompare(b.path)),
-    [files],
-  );
-
   const breadcrumbItems = useMemo(() => {
     const parts = currentPrefix.split('/').filter(Boolean);
     let runningPrefix = '';
@@ -163,6 +197,28 @@ export default function App() {
       }),
     ];
   }, [currentPrefix]);
+
+  const visibleItems = useMemo(() => {
+    const keyword = searchQuery.trim().toLowerCase();
+    const matchesKeyword = (item) => {
+      if (!keyword) return true;
+
+      const name = String(item.name || '').toLowerCase();
+      return name.includes(keyword);
+    };
+
+    const filteredFolders = folders.filter(matchesKeyword);
+    const filteredFiles = files.filter(matchesKeyword);
+
+    const sortedFolders = sortItems(filteredFolders, sortMode);
+    const sortedFiles = sortItems(filteredFiles, sortMode);
+
+    return groupMode === 'file-first'
+      ? [...sortedFiles, ...sortedFolders]
+      : [...sortedFolders, ...sortedFiles];
+  }, [files, folders, groupMode, searchQuery, sortMode]);
+
+  const totalItemCount = folders.length + files.length;
 
   async function loadFiles(
     nextPrefix = currentPrefix,
@@ -407,7 +463,9 @@ export default function App() {
           <section className="panel panel-main">
             <div className="section-head">
               <h2>Objects</h2>
-              <span className="count">{sortedFolders.length + sortedFiles.length} items</span>
+              <span className="count">
+                {visibleItems.length === totalItemCount ? `${totalItemCount} items` : `${visibleItems.length} of ${totalItemCount} items`}
+              </span>
             </div>
 
             <div className="breadcrumbs" aria-label="Folder path">
@@ -422,6 +480,34 @@ export default function App() {
                   {item.label}
                 </button>
               ))}
+            </div>
+
+            <div className="list-controls">
+              <label className="field control-field">
+                <span>Search</span>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(event) => setSearchQuery(event.target.value)}
+                  placeholder="Search this folder"
+                />
+              </label>
+              <label className="field control-field">
+                <span>Sort</span>
+                <select value={sortMode} onChange={(event) => setSortMode(event.target.value)}>
+                  <option value="alpha-asc">Alphabet (A to Z)</option>
+                  <option value="alpha-desc">Alphabet (Z to A)</option>
+                  <option value="modified-newest">Newest modified</option>
+                  <option value="modified-oldest">Oldest modified</option>
+                </select>
+              </label>
+              <label className="field control-field">
+                <span>Group</span>
+                <select value={groupMode} onChange={(event) => setGroupMode(event.target.value)}>
+                  <option value="folder-first">Folder first</option>
+                  <option value="file-first">File first</option>
+                </select>
+              </label>
             </div>
 
             {error ? <div className="error-box">{error}</div> : null}
@@ -439,8 +525,10 @@ export default function App() {
 
             {loading ? (
               <div className="empty-state">Loading files...</div>
-            ) : sortedFolders.length + sortedFiles.length === 0 ? (
+            ) : totalItemCount === 0 ? (
               <div className="empty-state">No files found in this folder.</div>
+            ) : visibleItems.length === 0 ? (
+              <div className="empty-state">No matching items in this folder.</div>
             ) : (
               <ul className="file-list">
                 {currentPrefix ? (
@@ -460,29 +548,160 @@ export default function App() {
                   </li>
                 ) : null}
 
-                {sortedFolders.map((folder) => (
-                  <li className="file-row folder-row" key={folder.key}>
-                    <div className="folder-row-shell">
-                      <button
-                        className="folder-open-button"
-                        onClick={() => loadFiles(folder.key, false, true, true)}
-                        type="button"
-                      >
-                        <span className="folder-icon" aria-hidden="true">📁</span>
-                        <span className="folder-label">{folder.name}</span>
-                        <span className="folder-path">{folder.path}</span>
-                      </button>
-                      {deleteMode ? (
-                        <div className="row-actions">
-                          {deleteConfirmKey === folder.key ? (
+                {visibleItems.map((item) => {
+                  if (item.kind === 'folder') {
+                    return (
+                      <li className="file-row folder-row" key={item.key}>
+                        <div className="folder-row-shell">
+                          <button
+                            className="folder-open-button"
+                            onClick={() => loadFiles(item.key, false, true, true)}
+                            type="button"
+                          >
+                            <span className="folder-icon" aria-hidden="true">📁</span>
+                            <span className="folder-label">{item.name}</span>
+                            <span className="folder-path">{item.path}</span>
+                          </button>
+                          {deleteMode ? (
+                            <div className="row-actions">
+                              {deleteConfirmKey === item.key ? (
+                                <>
+                                  <button
+                                    className="danger-button"
+                                    onClick={() => handleDelete(item.key)}
+                                    disabled={deleting === item.key}
+                                    type="button"
+                                  >
+                                    {deleting === item.key ? 'Deleting...' : 'Confirm'}
+                                  </button>
+                                  <button
+                                    className="ghost-button"
+                                    onClick={() => setDeleteConfirmKey('')}
+                                    type="button"
+                                  >
+                                    Cancel
+                                  </button>
+                                </>
+                              ) : (
+                                <button
+                                  className="danger-button"
+                                  onClick={() => setDeleteConfirmKey(item.key)}
+                                  type="button"
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
+                          ) : null}
+                        </div>
+                      </li>
+                    );
+                  }
+
+                  return (
+                    <li
+                      className="file-row"
+                      key={item.key}
+                      data-file-key={item.key}
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        if (item.key.endsWith('/')) return;
+                        setActionMenuKey((current) => (current === item.key ? '' : item.key));
+                      }}
+                    >
+                      <div className="file-meta">
+                        <div className="file-name-row">
+                          <div className="file-name">{item.name || 'Unnamed file'}</div>
+                          {recentRenames[item.key] ? (
+                            <div className="rename-tag">
+                              {recentRenames[item.key].oldName} {'>>'} {recentRenames[item.key].newName}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="file-path">{item.path || displayPath(item.key)}</div>
+                        <dl className="file-details">
+                          <div className="file-detail">
+                            <dt>Size</dt>
+                            <dd>{formatBytes(item.size)}</dd>
+                          </div>
+                          <div className="file-detail">
+                            <dt>Upload date</dt>
+                            <dd>{formatDateTime(item.upload_date)}</dd>
+                          </div>
+                        </dl>
+                        {!item.key.endsWith('/') && actionMenuKey === item.key ? (
+                          <div className="action-menu">
+                            <button
+                              className="secondary-button"
+                              onClick={() => {
+                                setEditingKey(item.key);
+                                setActionMenuKey('');
+                              }}
+                              type="button"
+                            >
+                              Rename
+                            </button>
+                          </div>
+                        ) : null}
+                        {!item.key.endsWith('/') && editingKey === item.key ? (
+                          <div className="rename-box">
+                            <label className="field grow">
+                              <span>Rename file</span>
+                              <input
+                                type="text"
+                                value={renameDrafts[item.key] || ''}
+                                onChange={(event) => setRenameDrafts((current) => ({
+                                  ...current,
+                                  [item.key]: event.target.value,
+                                }))}
+                                placeholder="new-file-name"
+                              />
+                            </label>
+                            <div className="rename-preview">
+                              Final name: {displayPath(getRenamedKey(item.key, renameDrafts[item.key] || '')) || 'Enter a new name'}
+                            </div>
+                            {renameNotices[item.key] ? (
+                              <div className={renameNotices[item.key].type === 'success' ? 'inline-success-box' : 'inline-error-box'}>
+                                {renameNotices[item.key].message}
+                              </div>
+                            ) : null}
+                            <div className="rename-actions">
+                              <button
+                                className="secondary-button"
+                                onClick={() => handleRename(item)}
+                                disabled={!getRenamedKey(item.key, renameDrafts[item.key] || '') || renaming === item.key}
+                                type="button"
+                              >
+                                {renaming === item.key ? 'Renaming...' : 'Rename'}
+                              </button>
+                              <button
+                                className="ghost-button"
+                                onClick={() => {
+                                  setEditingKey('');
+                                  setRenameNotices((current) => ({
+                                    ...current,
+                                    [item.key]: null,
+                                  }));
+                                }}
+                                type="button"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="row-actions">
+                        {deleteMode ? (
+                          deleteConfirmKey === item.key ? (
                             <>
                               <button
                                 className="danger-button"
-                                onClick={() => handleDelete(folder.key)}
-                                disabled={deleting === folder.key}
+                                onClick={() => handleDelete(item.key)}
+                                disabled={deleting === item.key}
                                 type="button"
                               >
-                                {deleting === folder.key ? 'Deleting...' : 'Confirm'}
+                                {deleting === item.key ? 'Deleting...' : 'Confirm'}
                               </button>
                               <button
                                 className="ghost-button"
@@ -495,169 +714,34 @@ export default function App() {
                           ) : (
                             <button
                               className="danger-button"
-                              onClick={() => setDeleteConfirmKey(folder.key)}
+                              onClick={() => setDeleteConfirmKey(item.key)}
                               type="button"
                             >
                               Delete
                             </button>
-                          )}
-                        </div>
-                      ) : null}
-                    </div>
-                  </li>
-                ))}
-
-                {sortedFiles.map((file) => (
-                  <li
-                    className="file-row"
-                    key={file.key}
-                    data-file-key={file.key}
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      if (file.key.endsWith('/')) return;
-                      setActionMenuKey((current) => (current === file.key ? '' : file.key));
-                    }}
-                  >
-                    <div className="file-meta">
-                      <div className="file-name-row">
-                        <div className="file-name">{file.name || 'Unnamed file'}</div>
-                        {recentRenames[file.key] ? (
-                          <div className="rename-tag">
-                            {recentRenames[file.key].oldName} {'>>'} {recentRenames[file.key].newName}
-                          </div>
+                          )
                         ) : null}
-                      </div>
-                      <div className="file-path">{file.path || displayPath(file.key)}</div>
-                      <dl className="file-details">
-                        <div className="file-detail">
-                          <dt>Size</dt>
-                          <dd>{formatBytes(file.size)}</dd>
-                        </div>
-                        <div className="file-detail">
-                          <dt>Upload date</dt>
-                          <dd>{formatDateTime(file.upload_date)}</dd>
-                        </div>
-                      </dl>
-                      {!file.key.endsWith('/') && actionMenuKey === file.key ? (
-                        <div className="action-menu">
+                        {!item.key.endsWith('/') ? (
                           <button
-                            className="secondary-button"
-                            onClick={() => {
-                              setEditingKey(file.key);
-                              setActionMenuKey('');
-                            }}
+                            className="ghost-button"
+                            onClick={() => setActionMenuKey((current) => (current === item.key ? '' : item.key))}
                             type="button"
                           >
-                            Rename
+                            Actions
                           </button>
-                        </div>
-                      ) : null}
-                      {!file.key.endsWith('/') && editingKey === file.key ? (
-                        <div className="rename-box">
-                          <label className="field grow">
-                            <span>Rename file</span>
-                            <input
-                              type="text"
-                              value={renameDrafts[file.key] || ''}
-                              onChange={(event) => setRenameDrafts((current) => ({
-                                ...current,
-                                [file.key]: event.target.value,
-                              }))}
-                              placeholder="new-file-name"
-                            />
-                          </label>
-                          <div className="rename-preview">
-                            Final name: {displayPath(getRenamedKey(file.key, renameDrafts[file.key] || '')) || 'Enter a new name'}
-                          </div>
-                          {renameNotices[file.key] ? (
-                            <div className={renameNotices[file.key].type === 'success' ? 'inline-success-box' : 'inline-error-box'}>
-                              {renameNotices[file.key].message}
-                            </div>
-                          ) : null}
-                          <div className="rename-actions">
-                            <button
-                              className="secondary-button"
-                              onClick={() => handleRename(file)}
-                              disabled={!getRenamedKey(file.key, renameDrafts[file.key] || '') || renaming === file.key}
-                              type="button"
-                            >
-                              {renaming === file.key ? 'Renaming...' : 'Rename'}
-                            </button>
-                            <button
-                              className="ghost-button"
-                              onClick={() => {
-                                setEditingKey('');
-                                setRenameNotices((current) => ({
-                                  ...current,
-                                  [file.key]: null,
-                                }));
-                              }}
-                              type="button"
-                            >
-                              Cancel
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="row-actions">
-                      {deleteMode ? (
-                        deleteConfirmKey === file.key ? (
-                          <>
-                            <button
-                              className="danger-button"
-                              onClick={() => handleDelete(file.key)}
-                              disabled={deleting === file.key}
-                              type="button"
-                            >
-                              {deleting === file.key ? 'Deleting...' : 'Confirm'}
-                            </button>
-                            <button
-                              className="ghost-button"
-                              onClick={() => setDeleteConfirmKey('')}
-                              type="button"
-                            >
-                              Cancel
-                            </button>
-                          </>
-                        ) : (
-                          <button
-                            className="danger-button"
-                            onClick={() => setDeleteConfirmKey(file.key)}
-                            type="button"
-                          >
-                            Delete
-                          </button>
-                        )
-                      ) : null}
-                      {!file.key.endsWith('/') ? (
+                        ) : null}
                         <button
-                          className="ghost-button"
-                          onClick={() => setActionMenuKey((current) => (current === file.key ? '' : file.key))}
+                          className="secondary-button"
+                          onClick={() => handleDownload(item.key)}
+                          disabled={downloading === item.key}
                           type="button"
                         >
-                          Actions
+                          {downloading === item.key ? 'Preparing...' : 'Download'}
                         </button>
-                      ) : null}
-                      <button
-                        className="secondary-button"
-                        onClick={() => handleDownload(file.key)}
-                        disabled={downloading === file.key}
-                        type="button"
-                      >
-                        {downloading === file.key ? 'Preparing...' : 'Download'}
-                      </button>
-                      <button
-                        className="ghost-button"
-                        onClick={() => handleDelete(file.key)}
-                        disabled={deleting === file.key}
-                        type="button"
-                      >
-                        {deleting === file.key ? 'Deleting...' : 'Delete'}
-                      </button>
-                    </div>
-                  </li>
-                ))}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>

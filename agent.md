@@ -116,6 +116,7 @@ Backend Docker dev run:
 - Rename should preserve the original extension even when the user omits it or types a different one
 - Add a trash feature similar to Google Drive so deleted files can be restored later
 - Keep folder browsing based on S3 prefixes and delimiters so deep nested paths continue to work
+- Keep search and sort in the current folder view based on the existing `list_objects_v2` response unless the user explicitly asks for deeper metadata
 
 ## Feature Tracking
 - Keep this file updated whenever a feature is added, removed, or merged
