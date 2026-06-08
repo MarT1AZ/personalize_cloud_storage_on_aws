@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api';
+const AUTH_TOKEN_KEY = 'pcs_auth_token';
 
 function normalizeKey(value) {
   return value.trim().replace(/^\/+/, '');
@@ -135,12 +136,14 @@ async function readResponse(response) {
 }
 
 async function api(path, options = {}) {
-  const hasBody = options.body !== undefined && options.body !== null;
+  const { authToken = '', ...requestOptions } = options;
+  const hasBody = requestOptions.body !== undefined && requestOptions.body !== null;
   const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
+    ...requestOptions,
     headers: {
-      ...(hasBody && !(options.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-      ...(options.headers || {}),
+      ...(hasBody && !(requestOptions.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...(requestOptions.headers || {}),
     },
   });
 
@@ -155,6 +158,14 @@ async function api(path, options = {}) {
 }
 
 export default function App() {
+  const [authToken, setAuthToken] = useState('');
+  const [authUser, setAuthUser] = useState(null);
+  const [authChecking, setAuthChecking] = useState(true);
+  const [loginUsername, setLoginUsername] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [authError, setAuthError] = useState('');
+
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
   const [currentPrefix, setCurrentPrefix] = useState('');
@@ -220,6 +231,43 @@ export default function App() {
 
   const totalItemCount = folders.length + files.length;
 
+  function clearWorkspaceState() {
+    setFolders([]);
+    setFiles([]);
+    setCurrentPrefix('');
+    setSearchQuery('');
+    setSortMode('alpha-asc');
+    setGroupMode('folder-first');
+    setLoading(true);
+    setRefreshing(false);
+    setError('');
+    setSuccess('');
+    setSelectedFile(null);
+    setUploading(false);
+    setFolderName('');
+    setCreatingFolder(false);
+    setDeleteKey('');
+    setDeleteMode(false);
+    setDeleteConfirmKey('');
+    setDeleting('');
+    setDownloading('');
+    setRenameDrafts({});
+    setRenaming('');
+    setActionMenuKey('');
+    setEditingKey('');
+    setRenameNotices({});
+    setRecentRenames({});
+    setRecentDeletes([]);
+  }
+
+  function handleLogout() {
+    localStorage.removeItem(AUTH_TOKEN_KEY);
+    setAuthToken('');
+    setAuthUser(null);
+    setAuthError('');
+    clearWorkspaceState();
+  }
+
   async function loadFiles(
     nextPrefix = currentPrefix,
     isManualRefresh = false,
@@ -242,12 +290,17 @@ export default function App() {
       } else {
         setLoading(true);
       }
-      const data = await api(`/files?prefix=${encodeURIComponent(normalizedPrefix)}`);
+      const data = await api(`/files?prefix=${encodeURIComponent(normalizedPrefix)}`, { authToken });
       setCurrentPrefix(data?.prefix || normalizedPrefix);
       setFolders(Array.isArray(data?.folders) ? data.folders : []);
       setFiles(Array.isArray(data?.files) ? data.files : []);
     } catch (err) {
-      setError(err.message || 'Could not load files');
+      if (err.message === 'Invalid or expired token') {
+        handleLogout();
+        setAuthError('Your session expired. Please log in again.');
+      } else {
+        setError(err.message || 'Could not load files');
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -255,8 +308,38 @@ export default function App() {
   }
 
   useEffect(() => {
-    loadFiles('');
+    async function restoreSession() {
+      const storedToken = localStorage.getItem(AUTH_TOKEN_KEY) || '';
+      if (!storedToken) {
+        setAuthChecking(false);
+        setLoading(false);
+        return;
+      }
+
+      try {
+        const user = await api('/auth/me', { authToken: storedToken });
+        setAuthToken(storedToken);
+        setAuthUser(user);
+      } catch (err) {
+        localStorage.removeItem(AUTH_TOKEN_KEY);
+        setAuthToken('');
+        setAuthUser(null);
+        setAuthError('Please log in to continue.');
+      } finally {
+        setAuthChecking(false);
+      }
+    }
+
+    restoreSession();
   }, []);
+
+  useEffect(() => {
+    if (!authUser || !authToken) {
+      return;
+    }
+
+    loadFiles('');
+  }, [authUser, authToken]);
 
   useEffect(() => {
     function handlePointerDown(event) {
@@ -271,6 +354,32 @@ export default function App() {
     window.addEventListener('pointerdown', handlePointerDown);
     return () => window.removeEventListener('pointerdown', handlePointerDown);
   }, [actionMenuKey]);
+
+  async function handleLogin(event) {
+    event.preventDefault();
+
+    try {
+      setAuthError('');
+      setLoginSubmitting(true);
+      const data = await api('/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          username: loginUsername,
+          password: loginPassword,
+        }),
+      });
+
+      localStorage.setItem(AUTH_TOKEN_KEY, data.access_token);
+      setAuthToken(data.access_token);
+      setAuthUser(data.user);
+      setLoginPassword('');
+      clearWorkspaceState();
+    } catch (err) {
+      setAuthError(err.message || 'Invalid username or password');
+    } finally {
+      setLoginSubmitting(false);
+    }
+  }
 
   async function handleUpload(event) {
     event.preventDefault();
@@ -287,6 +396,7 @@ export default function App() {
       await api('/upload', {
         method: 'POST',
         body: formData,
+        authToken,
       });
 
       setSelectedFile(null);
@@ -309,6 +419,7 @@ export default function App() {
       setDeleting(normalized);
       await api(`/files/${encodeURIComponent(normalized)}`, {
         method: 'DELETE',
+        authToken,
       });
       if (normalizeKey(deleteKey) === normalized) {
         setDeleteKey('');
@@ -335,7 +446,7 @@ export default function App() {
       setError('');
       setSuccess('');
       setDownloading(normalized);
-      const data = await api(`/files/${encodeURIComponent(normalized)}/download`);
+      const data = await api(`/files/${encodeURIComponent(normalized)}/download`, { authToken });
       if (!data?.url) {
         throw new Error('Download URL not found');
       }
@@ -367,6 +478,7 @@ export default function App() {
           name: folderName,
           prefix: currentPrefix,
         }),
+        authToken,
       });
       setFolderName('');
       setSuccess(`Created folder ${displayPath(data?.created_folder || buildFolderPreview(currentPrefix, folderName))}`);
@@ -396,6 +508,7 @@ export default function App() {
         body: JSON.stringify({
           new_name: draft,
         }),
+        authToken,
       });
       setRenameDrafts((current) => ({
         ...current,
@@ -433,6 +546,60 @@ export default function App() {
     }
   }
 
+  if (authChecking) {
+    return (
+      <main className="login-shell">
+        <section className="panel login-card">
+          <p className="eyebrow">Personal cloud storage</p>
+          <h1>Checking session</h1>
+          <p className="subtle">Please wait while we restore your access.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (!authUser || !authToken) {
+    return (
+      <main className="login-shell">
+        <section className="panel login-card">
+          <p className="eyebrow">Personal cloud storage</p>
+          <h1>Log in</h1>
+          <p className="subtle">Use your username and password to open the file manager.</p>
+          {authError ? <div className="error-box">{authError}</div> : null}
+          <form className="stack-form" onSubmit={handleLogin}>
+            <label className="field">
+              <span>Username</span>
+              <input
+                type="text"
+                value={loginUsername}
+                onChange={(event) => setLoginUsername(event.target.value)}
+                autoComplete="username"
+                placeholder="marz"
+              />
+            </label>
+            <label className="field">
+              <span>Password</span>
+              <input
+                type="password"
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
+                autoComplete="current-password"
+                placeholder="Enter password"
+              />
+            </label>
+            <button
+              className="primary-button"
+              type="submit"
+              disabled={!loginUsername.trim() || !loginPassword || loginSubmitting}
+            >
+              {loginSubmitting ? 'Logging in...' : 'Log in'}
+            </button>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="app-shell">
       <section className="header-row">
@@ -442,6 +609,7 @@ export default function App() {
           <p className="subtle">Browse folders, open nested paths, and manage files from one simple screen.</p>
         </div>
         <div className="header-actions">
+          <div className="session-badge">Signed in as {authUser.username}</div>
           <button
             className={deleteMode ? 'danger-button' : 'secondary-button'}
             onClick={() => {
@@ -454,6 +622,9 @@ export default function App() {
           </button>
           <button className="secondary-button" onClick={() => loadFiles(currentPrefix, true)} disabled={refreshing || loading}>
             {refreshing ? 'Refreshing...' : 'Refresh'}
+          </button>
+          <button className="ghost-button" onClick={handleLogout} type="button">
+            Log out
           </button>
         </div>
       </section>
@@ -821,9 +992,9 @@ export default function App() {
 
           <section className="panel side-panel panel-muted">
             <div className="section-head">
-              <h2>Coming Next</h2>
+              <h2>Session</h2>
             </div>
-            <p className="subtle panel-note">This side area is reserved for future tools like trash, filters, and richer file details.</p>
+            <p className="subtle panel-note">Your login stays active after reload until you log out or the token expires.</p>
           </section>
         </aside>
       </section>

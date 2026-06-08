@@ -42,8 +42,10 @@ The frontend is not part of Docker. It talks to the backend directly over HTTP.
 
 ## API Surface
 - `GET /api/` returns `{"status":"ok"}`
+- `POST /api/auth/login` returns a bearer token plus the temporary user profile
+- `GET /api/auth/me` returns the current authenticated user from the bearer token
 - `GET /api/whoami` returns the current AWS caller identity
-- `GET /api/check_bucket` returns the configured bucket name
+- `GET /api/check_bucket` returns the current authenticated user's bucket info
 - `GET /api/files?prefix=...` returns the current folder prefix plus immediate child folders and files
 - `POST /api/folders` creates a folder inside the provided prefix
 - `POST /api/upload` uploads one multipart file, optionally into the provided folder prefix
@@ -110,6 +112,7 @@ Backend Docker dev run:
 
 ## Runtime Notes
 - `python-multipart` is required for uploads
+- `bcrypt` and `PyJWT` support the temporary login flow
 - the frontend assumes the backend is reachable at `http://localhost:8000/api` unless `VITE_API_BASE` is set
 - CORS is enabled in the backend specifically for local frontend development
 
@@ -121,6 +124,8 @@ Backend Docker dev run:
 - Keep folder browsing based on S3 prefixes and delimiters so deep nested paths continue to work
 - Keep search and sort in the current folder view based on the existing `list_objects_v2` response unless the user explicitly asks for deeper metadata
 - Large file renames may take longer, so the UI should make that delay clear during the rename flow
+- Frontend logout currently clears the saved JWT locally, so add future backend logout or token revocation support if server-side sign-out is needed
+- Refactor the frontend app UI into multiple files so auth, file browsing, and side-panel tools are easier to maintain
 
 ## Feature Tracking
 - Keep this file updated whenever a feature is added, removed, or merged

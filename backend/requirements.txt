@@ -1,5 +1,7 @@
 boto3
+bcrypt
 fastapi
+PyJWT
 uvicorn[standard]
 python-multipart
 python-dotenv

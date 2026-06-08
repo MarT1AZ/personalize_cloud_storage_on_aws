@@ -6,6 +6,8 @@ The backend source now lives under `backend/app/` so the dev container can bind-
 Backend settings now come from a root `.env` file, with `.env.template` provided as the starting point.
 
 ## Current Features
+- Log in with username and password
+- Stay signed in after page reload with a saved token
 - Browse folders and files
 - Search items in the current folder by keyword
 - Sort items by alphabet or last modified time

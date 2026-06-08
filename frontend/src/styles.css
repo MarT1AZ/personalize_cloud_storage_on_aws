@@ -49,6 +49,50 @@ button:not(:disabled):active {
   padding: 32px 0 48px;
 }
 
+.login-shell {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.login-card {
+  width: min(860px, calc(100vw - 48px));
+  margin-bottom: 0;
+  padding: 40px;
+  background: linear-gradient(180deg, #111824 0%, #0d141f 100%);
+}
+
+.login-card h1 {
+  font-size: clamp(2.5rem, 4vw, 3.4rem);
+  line-height: 1;
+}
+
+.login-card .subtle {
+  font-size: 1.08rem;
+  max-width: 46ch;
+}
+
+.login-card .stack-form {
+  gap: 18px;
+  margin-top: 22px;
+}
+
+.login-card .field span {
+  font-size: 1rem;
+}
+
+.login-card input[type="text"],
+.login-card input[type="password"] {
+  min-height: 56px;
+  font-size: 1.05rem;
+}
+
+.login-card .primary-button {
+  min-height: 52px;
+  font-size: 1.05rem;
+}
+
 .header-row {
   display: flex;
   align-items: flex-start;
@@ -61,6 +105,7 @@ button:not(:disabled):active {
   display: flex;
   gap: 10px;
   align-items: center;
+  flex-wrap: wrap;
 }
 
 .eyebrow {
@@ -207,8 +252,21 @@ h1 {
   font-size: 0.9rem;
 }
 
+.session-badge {
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: 999px;
+  background: #121b29;
+  border: 1px solid #2a3850;
+  color: #cfe0f1;
+  font-size: 0.9rem;
+}
+
 input[type="file"],
 input[type="text"],
+input[type="password"],
 select {
   width: 100%;
   border: 1px solid #2a3850;
@@ -523,6 +581,11 @@ input[type="file"]::file-selector-button {
   .app-shell {
     width: calc(100vw - 24px);
     padding: 24px 0 36px;
+  }
+
+  .login-card {
+    width: 100%;
+    padding: 24px;
   }
 
   .header-actions,
