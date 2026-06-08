@@ -9,6 +9,7 @@ The frontend is run locally with Node/Vite. The backend is run with Docker.
 
 ## Current Structure
 - Backend app: `backend/app/storage_backend.py`
+- Backend config module: `backend/app/config.py`
 - Backend S3 service: `backend/app/services/s3_storage_service.py`
 - Backend production image: `backend/dockerfile`
 - Backend dev image: `backend/Dockerfile.dev`
@@ -26,9 +27,11 @@ The frontend is run locally with Node/Vite. The backend is run with Docker.
 - Port: `8000`
 - Required environment variable: `S3_BUCKET`
 - Optional environment variable: `CORS_ORIGINS`
+- Optional environment variable: `BACKEND_DOMAIN`
 
 The backend creates an S3 client with the normal AWS credential chain. In this repo, Docker mounts the local AWS credentials directory into the container read-only.
 The route file should stay focused on request models and API handlers, while shared S3 behavior lives in the service layer.
+The config module should load settings from the repo root `.env` file and expose them as Python settings values instead of direct `os.environ[...]` reads in route code.
 
 ## Frontend Summary
 - Stack: React with Vite
@@ -95,15 +98,13 @@ Backend Docker dev run:
 `docker-compose.yml`:
 - builds from `backend/dockerfile`
 - publishes `8000:8000`
-- sets `S3_BUCKET=storage-602343785232-ap-southeast-1-an`
-- sets `CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000`
+- loads backend settings from the repo root `.env`
 - mounts `${USERPROFILE}/.aws:/root/.aws:ro`
 
 `docker-compose.dev.yml`:
 - builds from `backend/Dockerfile.dev`
 - publishes `8000:8000`
-- uses the same `S3_BUCKET`
-- uses the same `CORS_ORIGINS`
+- loads backend settings from the repo root `.env`
 - mounts `${USERPROFILE}/.aws:/root/.aws:ro`
 - bind-mounts `./backend:/app` for live backend edits, including the `app/` source package used by `uvicorn --reload`
 

@@ -2,23 +2,13 @@ from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import boto3
-import os
 
+from app.config import settings
 from app.services.s3_storage_service import S3StorageService
 
 app = FastAPI()
 
-BUCKET = os.environ["S3_BUCKET"]
-CORS_ORIGINS = [
-    origin.strip()
-    for origin in os.environ.get(
-        "CORS_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000",
-    ).split(",")
-    if origin.strip()
-]
-
-storage_service = S3StorageService(BUCKET)
+storage_service = S3StorageService(settings.s3_bucket)
 
 
 class RenameRequest(BaseModel):
@@ -32,7 +22,7 @@ class CreateFolderRequest(BaseModel):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=CORS_ORIGINS,
+    allow_origins=settings.cors_origins,
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -51,7 +41,7 @@ def health():
 
 @app.get("/api/check_bucket")
 def current_bucket():
-    return {"bucket": BUCKET}
+    return {"bucket": settings.s3_bucket}
 
 
 @app.get("/api/files")

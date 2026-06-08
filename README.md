@@ -3,6 +3,7 @@
 Simple personal cloud storage app with a React frontend and a FastAPI backend backed by one S3 bucket.
 
 The backend source now lives under `backend/app/` so the dev container can bind-mount the backend folder and reload code changes from a dedicated source package.
+Backend settings now come from a root `.env` file, with `.env.template` provided as the starting point.
 
 ## Current Features
 - Browse folders and files
