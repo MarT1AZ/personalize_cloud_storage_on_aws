@@ -23,6 +23,7 @@ s3 = boto3.client("s3")
 class RenameRequest(BaseModel):
     new_name: str
 
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=CORS_ORIGINS,

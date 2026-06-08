@@ -8,7 +8,7 @@ This repo contains:
 The frontend is run locally with Node/Vite. The backend is run with Docker.
 
 ## Current Structure
-- Backend app: `backend/storage_backend.py`
+- Backend app: `backend/app/storage_backend.py`
 - Backend production image: `backend/dockerfile`
 - Backend dev image: `backend/Dockerfile.dev`
 - Backend dependencies: `backend/requirements.txt`
@@ -102,7 +102,7 @@ Backend Docker dev run:
 - uses the same `S3_BUCKET`
 - uses the same `CORS_ORIGINS`
 - mounts `${USERPROFILE}/.aws:/root/.aws:ro`
-- bind-mounts `./backend:/app` for live backend edits
+- bind-mounts `./backend:/app` for live backend edits, including the `app/` source package used by `uvicorn --reload`
 
 ## Runtime Notes
 - `python-multipart` is required for uploads
