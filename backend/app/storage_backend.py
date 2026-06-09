@@ -21,6 +21,10 @@ class CreateFolderRequest(BaseModel):
     parent_id: str = ""
 
 
+class ObjectSelectionRequest(BaseModel):
+    object_ids: list[str]
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -66,6 +70,13 @@ def list_files(
     return storage_service.list_files(folder_id)
 
 
+@app.get("/api/trash")
+def list_trash(
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.list_trashed_files()
+
+
 @app.post("/api/upload")
 async def upload(
     file: UploadFile = File(...),
@@ -106,6 +117,22 @@ def delete_file(
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
     return storage_service.delete_object(object_id)
+
+
+@app.post("/api/trash/restore")
+def restore_trash(
+    request: ObjectSelectionRequest,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.restore_objects(request.object_ids)
+
+
+@app.post("/api/trash/delete")
+def delete_trash(
+    request: ObjectSelectionRequest,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.permanently_delete_objects(request.object_ids)
 
 
 @app.delete("/api/delete")

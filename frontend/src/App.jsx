@@ -155,9 +155,11 @@ export default function App() {
 
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
+  const [trashedFiles, setTrashedFiles] = useState([]);
   const [currentFolderId, setCurrentFolderId] = useState('');
   const [currentPath, setCurrentPath] = useState('/');
   const [breadcrumbItems, setBreadcrumbItems] = useState([{ label: 'Root', folder_id: '' }]);
+  const [viewMode, setViewMode] = useState('files');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState('alpha-asc');
   const [groupMode, setGroupMode] = useState('folder-first');
@@ -173,6 +175,7 @@ export default function App() {
   const [deleteMode, setDeleteMode] = useState(false);
   const [deleteConfirmKey, setDeleteConfirmKey] = useState('');
   const [deleting, setDeleting] = useState('');
+  const [trashAction, setTrashAction] = useState('');
   const [downloading, setDownloading] = useState('');
   const [renameDrafts, setRenameDrafts] = useState({});
   const [renaming, setRenaming] = useState('');
@@ -181,6 +184,7 @@ export default function App() {
   const [renameNotices, setRenameNotices] = useState({});
   const [recentRenames, setRecentRenames] = useState({});
   const [recentDeletes, setRecentDeletes] = useState([]);
+  const [selectedTrashIds, setSelectedTrashIds] = useState({});
 
   const visibleItems = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
@@ -188,6 +192,10 @@ export default function App() {
       if (!keyword) return true;
       return String(item.name || '').toLowerCase().includes(keyword);
     };
+
+    if (viewMode === 'trash') {
+      return sortItems(trashedFiles.filter(matchesKeyword), sortMode);
+    }
 
     const filteredFolders = folders.filter(matchesKeyword);
     const filteredFiles = files.filter(matchesKeyword);
@@ -197,16 +205,19 @@ export default function App() {
     return groupMode === 'file-first'
       ? [...sortedFiles, ...sortedFolders]
       : [...sortedFolders, ...sortedFiles];
-  }, [files, folders, groupMode, searchQuery, sortMode]);
+  }, [files, folders, groupMode, searchQuery, sortMode, trashedFiles, viewMode]);
 
-  const totalItemCount = folders.length + files.length;
+  const totalItemCount = viewMode === 'trash' ? trashedFiles.length : folders.length + files.length;
+  const selectedTrashCount = Object.values(selectedTrashIds).filter(Boolean).length;
 
   function clearWorkspaceState() {
     setFolders([]);
     setFiles([]);
+    setTrashedFiles([]);
     setCurrentFolderId('');
     setCurrentPath('/');
     setBreadcrumbItems([{ label: 'Root', folder_id: '' }]);
+    setViewMode('files');
     setSearchQuery('');
     setSortMode('alpha-asc');
     setGroupMode('folder-first');
@@ -222,6 +233,7 @@ export default function App() {
     setDeleteMode(false);
     setDeleteConfirmKey('');
     setDeleting('');
+    setTrashAction('');
     setDownloading('');
     setRenameDrafts({});
     setRenaming('');
@@ -230,6 +242,7 @@ export default function App() {
     setRenameNotices({});
     setRecentRenames({});
     setRecentDeletes([]);
+    setSelectedTrashIds({});
   }
 
   function handleLogout() {
@@ -265,6 +278,44 @@ export default function App() {
       setBreadcrumbItems(Array.isArray(data?.breadcrumbs) && data.breadcrumbs.length > 0 ? data.breadcrumbs : [{ label: 'Root', folder_id: '' }]);
       setFolders(Array.isArray(data?.folders) ? data.folders : []);
       setFiles(Array.isArray(data?.files) ? data.files : []);
+      setTrashedFiles([]);
+      setSelectedTrashIds({});
+      setDeleteMode(false);
+      setViewMode('files');
+    } catch (err) {
+      if (err.message === 'Invalid or expired token') {
+        handleLogout();
+        setAuthError('Your session expired. Please log in again.');
+      } else {
+        setError(err.message || 'Could not load files');
+      }
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }
+
+  async function loadTrash(isManualRefresh = false) {
+    try {
+      setError('');
+      setSuccess('');
+      if (isManualRefresh) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      const data = await api('/trash', { authToken });
+      setFolders([]);
+      setFiles([]);
+      setCurrentFolderId('');
+      setCurrentPath('/trash');
+      setBreadcrumbItems([{ label: 'Trash', folder_id: '' }]);
+      setTrashedFiles(Array.isArray(data?.files) ? data.files : []);
+      setSelectedTrashIds({});
+      setDeleteMode(false);
+      setDeleteConfirmKey('');
+      setViewMode('trash');
     } catch (err) {
       if (err.message === 'Invalid or expired token') {
         handleLogout();
@@ -401,6 +452,62 @@ export default function App() {
     }
   }
 
+  async function handleRestoreTrash() {
+    const objectIds = Object.entries(selectedTrashIds)
+      .filter(([, isSelected]) => isSelected)
+      .map(([objectId]) => objectId);
+
+    if (objectIds.length === 0) return;
+
+    try {
+      setError('');
+      setSuccess('');
+      setTrashAction('restore');
+      const data = await api('/trash/restore', {
+        method: 'POST',
+        body: JSON.stringify({ object_ids: objectIds }),
+        authToken,
+      });
+      setSelectedTrashIds({});
+      setDeleteConfirmKey('');
+      const restoredCount = Array.isArray(data?.restored) ? data.restored.length : objectIds.length;
+      setSuccess(`Restored ${restoredCount} file${restoredCount === 1 ? '' : 's'}.`);
+      await loadTrash(true);
+    } catch (err) {
+      setError(err.message || 'Restore failed');
+    } finally {
+      setTrashAction('');
+    }
+  }
+
+  async function handleDeleteTrash() {
+    const objectIds = Object.entries(selectedTrashIds)
+      .filter(([, isSelected]) => isSelected)
+      .map(([objectId]) => objectId);
+
+    if (objectIds.length === 0) return;
+
+    try {
+      setError('');
+      setSuccess('');
+      setTrashAction('delete');
+      const data = await api('/trash/delete', {
+        method: 'POST',
+        body: JSON.stringify({ object_ids: objectIds }),
+        authToken,
+      });
+      setSelectedTrashIds({});
+      setDeleteConfirmKey('');
+      const deletedCount = Array.isArray(data?.deleted) ? data.deleted.length : objectIds.length;
+      setSuccess(`Deleted ${deletedCount} file${deletedCount === 1 ? '' : 's'} forever.`);
+      await loadTrash(true);
+    } catch (err) {
+      setError(err.message || 'Permanent delete failed');
+    } finally {
+      setTrashAction('');
+    }
+  }
+
   async function handleDownload(rawObjectId) {
     const objectId = normalizeId(rawObjectId);
     if (!objectId) return;
@@ -507,6 +614,25 @@ export default function App() {
     loadFiles(parentFolderId, false, true, true);
   }
 
+  function toggleTrashSelection(objectId) {
+    setSelectedTrashIds((current) => ({
+      ...current,
+      [objectId]: !current[objectId],
+    }));
+  }
+
+  function toggleSelectAllTrash() {
+    if (visibleItems.length === 0) return;
+    const shouldSelectAll = visibleItems.some((item) => !selectedTrashIds[item.object_id]);
+    const nextSelection = {};
+
+    visibleItems.forEach((item) => {
+      nextSelection[item.object_id] = shouldSelectAll;
+    });
+
+    setSelectedTrashIds(nextSelection);
+  }
+
   if (authChecking) {
     return (
       <main className="login-shell">
@@ -558,14 +684,37 @@ export default function App() {
           <button
             className={deleteMode ? 'danger-button' : 'secondary-button'}
             onClick={() => {
-              setDeleteMode((current) => !current);
+              if (viewMode === 'trash') {
+                return;
+              }
               setDeleteConfirmKey('');
+              setDeleteMode((current) => !current);
+            }}
+            disabled={viewMode === 'trash'}
+            type="button"
+          >
+            {deleteMode ? 'Exit Delete' : 'Delete'}
+          </button>
+          <button
+            className={viewMode === 'trash' ? 'danger-button' : 'secondary-button'}
+            onClick={() => {
+              setDeleteConfirmKey('');
+              if (viewMode === 'trash') {
+                loadFiles('', false, true, true);
+              } else {
+                loadTrash();
+              }
             }}
             type="button"
           >
-            {deleteMode ? 'Exit Trash' : 'Trash'}
+            {viewMode === 'trash' ? 'Exit Trash' : 'View Trash'}
           </button>
-          <button className="secondary-button" onClick={() => loadFiles(currentFolderId, true)} disabled={refreshing || loading} type="button">
+          <button
+            className="secondary-button"
+            onClick={() => (viewMode === 'trash' ? loadTrash(true) : loadFiles(currentFolderId, true))}
+            disabled={refreshing || loading}
+            type="button"
+          >
             {refreshing ? 'Refreshing...' : 'Refresh'}
           </button>
           <button className="ghost-button" onClick={handleLogout} type="button">Log out</button>
@@ -576,25 +725,29 @@ export default function App() {
         <div className="main-column">
           <section className="panel panel-main">
             <div className="section-head">
-              <h2>Objects</h2>
+              <h2>{viewMode === 'trash' ? 'Trash' : 'Objects'}</h2>
               <span className="count">
                 {visibleItems.length === totalItemCount ? `${totalItemCount} items` : `${visibleItems.length} of ${totalItemCount} items`}
               </span>
             </div>
 
-            <div className="breadcrumbs" aria-label="Folder path">
-              {breadcrumbItems.map((item) => (
-                <button
-                  key={item.folder_id || 'root'}
-                  className={item.folder_id === currentFolderId ? 'breadcrumb-current' : 'breadcrumb-link'}
-                  disabled={item.folder_id === currentFolderId}
-                  onClick={() => handleOpenFolder(item.folder_id)}
-                  type="button"
-                >
-                  {item.label}
-                </button>
-              ))}
-            </div>
+            {viewMode === 'trash' ? (
+              <div className="helper-text">Trashed files stay here until you restore them or delete them forever.</div>
+            ) : (
+              <div className="breadcrumbs" aria-label="Folder path">
+                {breadcrumbItems.map((item) => (
+                  <button
+                    key={item.folder_id || 'root'}
+                    className={item.folder_id === currentFolderId ? 'breadcrumb-current' : 'breadcrumb-link'}
+                    disabled={item.folder_id === currentFolderId}
+                    onClick={() => handleOpenFolder(item.folder_id)}
+                    type="button"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="list-controls">
               <label className="field control-field">
@@ -629,16 +782,32 @@ export default function App() {
                 </div>
               </div>
             ) : null}
+            {viewMode === 'trash' ? (
+              <div className="delete-history-box">
+                <div className="delete-history-title">Selection</div>
+                <div className="delete-history-list">
+                  <button className="secondary-button" onClick={toggleSelectAllTrash} disabled={visibleItems.length === 0 || !!trashAction} type="button">
+                    {selectedTrashCount === visibleItems.length && visibleItems.length > 0 ? 'Clear visible selection' : 'Select visible'}
+                  </button>
+                  <button className="secondary-button" onClick={handleRestoreTrash} disabled={selectedTrashCount === 0 || !!trashAction} type="button">
+                    {trashAction === 'restore' ? 'Restoring...' : `Restore selected (${selectedTrashCount})`}
+                  </button>
+                  <button className="danger-button" onClick={handleDeleteTrash} disabled={selectedTrashCount === 0 || !!trashAction} type="button">
+                    {trashAction === 'delete' ? 'Deleting...' : `Delete selected (${selectedTrashCount})`}
+                  </button>
+                </div>
+              </div>
+            ) : null}
 
             {loading ? (
-              <div className="empty-state">Loading files...</div>
+              <div className="empty-state">{viewMode === 'trash' ? 'Loading trash...' : 'Loading files...'}</div>
             ) : totalItemCount === 0 ? (
-              <div className="empty-state">No files found in this folder.</div>
+              <div className="empty-state">{viewMode === 'trash' ? 'Trash is empty.' : 'No files found in this folder.'}</div>
             ) : visibleItems.length === 0 ? (
-              <div className="empty-state">No matching items in this folder.</div>
+              <div className="empty-state">{viewMode === 'trash' ? 'No matching files in trash.' : 'No matching items in this folder.'}</div>
             ) : (
               <ul className="file-list">
-                {currentFolderId ? (
+                {viewMode === 'files' && currentFolderId ? (
                   <li className="file-row folder-row folder-up-row">
                     <button className="folder-open-button" onClick={handleOpenParent} type="button">
                       <span className="folder-icon" aria-hidden="true">DIR</span>
@@ -648,6 +817,45 @@ export default function App() {
                 ) : null}
 
                 {visibleItems.map((item) => {
+                  if (viewMode === 'trash') {
+                    const isSelected = !!selectedTrashIds[item.object_id];
+                    return (
+                      <li className="file-row" key={item.object_id}>
+                        <div className="file-meta">
+                          <div className="file-name-row">
+                            <label className="folder-open-button">
+                              <input
+                                type="checkbox"
+                                checked={isSelected}
+                                onChange={() => toggleTrashSelection(item.object_id)}
+                              />
+                              <span className="file-name">{item.name || 'Unnamed file'}</span>
+                            </label>
+                          </div>
+                          <div className="file-path">Restore to: {displayPath(item.parent_path || '/')}</div>
+                          <dl className="file-details">
+                            <div className="file-detail">
+                              <dt>Deleted</dt>
+                              <dd>{formatDateTime(item.deleted_at)}</dd>
+                            </div>
+                            <div className="file-detail">
+                              <dt>Uploaded</dt>
+                              <dd>{formatDateTime(item.upload_date)}</dd>
+                            </div>
+                          </dl>
+                        </div>
+                        <div className="row-actions">
+                          <button className="secondary-button" onClick={() => {
+                            setSelectedTrashIds({ [item.object_id]: true });
+                            setDeleteConfirmKey('');
+                          }} type="button">
+                            Select
+                          </button>
+                        </div>
+                      </li>
+                    );
+                  }
+
                   if (item.kind === 'folder') {
                     return (
                       <li className="file-row folder-row" key={item.object_id}>
@@ -787,52 +995,71 @@ export default function App() {
         </div>
 
         <aside className="side-column">
-          <section className="panel side-panel">
-            <div className="section-head">
-              <h2>Create folder</h2>
-            </div>
-            <form className="stack-form" onSubmit={handleCreateFolder}>
-              <label className="field">
-                <span>Folder name</span>
-                <input type="text" value={folderName} onChange={(event) => setFolderName(event.target.value)} placeholder="new-folder" />
-              </label>
-              <div className="helper-text">Final folder: {buildFolderPreview(currentPath, folderName) || '/'}</div>
-              <button className="primary-button" type="submit" disabled={!normalizeKey(folderName) || creatingFolder}>
-                {creatingFolder ? 'Creating...' : 'Create folder'}
-              </button>
-            </form>
-          </section>
+          {viewMode === 'files' ? (
+            <>
+              <section className="panel side-panel">
+                <div className="section-head">
+                  <h2>Create folder</h2>
+                </div>
+                <form className="stack-form" onSubmit={handleCreateFolder}>
+                  <label className="field">
+                    <span>Folder name</span>
+                    <input type="text" value={folderName} onChange={(event) => setFolderName(event.target.value)} placeholder="new-folder" />
+                  </label>
+                  <div className="helper-text">Final folder: {buildFolderPreview(currentPath, folderName) || '/'}</div>
+                  <button className="primary-button" type="submit" disabled={!normalizeKey(folderName) || creatingFolder}>
+                    {creatingFolder ? 'Creating...' : 'Create folder'}
+                  </button>
+                </form>
+              </section>
 
-          <section className="panel side-panel">
-            <div className="section-head">
-              <h2>Upload</h2>
-            </div>
-            <form className="stack-form" onSubmit={handleUpload}>
-              <label className="field">
-                <span>Select file</span>
-                <input type="file" onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} />
-              </label>
-              <div className="helper-text">Current folder: {currentPath || '/'}</div>
-              <button className="primary-button" type="submit" disabled={!selectedFile || uploading}>
-                {uploading ? 'Uploading...' : 'Upload'}
-              </button>
-            </form>
-          </section>
+              <section className="panel side-panel">
+                <div className="section-head">
+                  <h2>Upload</h2>
+                </div>
+                <form className="stack-form" onSubmit={handleUpload}>
+                  <label className="field">
+                    <span>Select file</span>
+                    <input type="file" onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} />
+                  </label>
+                  <div className="helper-text">Current folder: {currentPath || '/'}</div>
+                  <button className="primary-button" type="submit" disabled={!selectedFile || uploading}>
+                    {uploading ? 'Uploading...' : 'Upload'}
+                  </button>
+                </form>
+              </section>
 
-          <section className="panel side-panel">
-            <div className="section-head">
-              <h2>Delete by id</h2>
-            </div>
-            <div className="stack-form">
-              <label className="field">
-                <span>Object id</span>
-                <input type="text" value={deleteObjectId} onChange={(event) => setDeleteObjectId(event.target.value)} placeholder="uuid" />
-              </label>
-              <button className="danger-button" onClick={() => handleDelete(deleteObjectId)} disabled={!normalizeId(deleteObjectId) || deleting} type="button">
-                {deleting && normalizeId(deleteObjectId) === deleting ? 'Deleting...' : 'Delete'}
-              </button>
-            </div>
-          </section>
+              <section className="panel side-panel">
+                <div className="section-head">
+                  <h2>Delete by id</h2>
+                </div>
+                <div className="stack-form">
+                  <label className="field">
+                    <span>Object id</span>
+                    <input type="text" value={deleteObjectId} onChange={(event) => setDeleteObjectId(event.target.value)} placeholder="uuid" />
+                  </label>
+                  <button className="danger-button" onClick={() => handleDelete(deleteObjectId)} disabled={!normalizeId(deleteObjectId) || deleting} type="button">
+                    {deleting && normalizeId(deleteObjectId) === deleting ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
+              </section>
+            </>
+          ) : (
+            <section className="panel side-panel">
+              <div className="section-head">
+                <h2>Trash actions</h2>
+              </div>
+              <div className="stack-form">
+                <div className="helper-text">Selected files restore to their old parent folder. If that folder no longer exists, they go into `/restored/`.</div>
+                <button className="secondary-button" onClick={handleRestoreTrash} disabled={selectedTrashCount === 0 || !!trashAction} type="button">
+                  {trashAction === 'restore' ? 'Restoring...' : `Restore selected (${selectedTrashCount})`}
+                </button>
+                <button className="danger-button" onClick={handleDeleteTrash} disabled={selectedTrashCount === 0 || !!trashAction} type="button">
+                  {trashAction === 'delete' ? 'Deleting...' : `Delete forever (${selectedTrashCount})`}
+                </button>
+              </div>
+            </section>
+          )}
 
           <section className="panel side-panel panel-muted">
             <div className="section-head">

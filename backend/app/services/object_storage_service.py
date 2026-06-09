@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import boto3
 from fastapi import HTTPException
+from boto3.dynamodb.conditions import Attr
 
 
 class ObjectStorageService:
@@ -63,6 +64,21 @@ class ObjectStorageService:
             "breadcrumbs": breadcrumbs,
             "folders": folders,
             "files": files,
+        }
+
+    def list_trashed_files(self):
+        trashed_items = []
+
+        for metadata in self.scan_objects(
+            filter_expression=Attr("user_id").eq(self.user_id) & Attr("status").eq("trashed"),
+        ):
+            if metadata.get("object_type") != "file":
+                continue
+            trashed_items.append(self.serialize_trashed_object(metadata))
+
+        trashed_items.sort(key=lambda item: item.get("deleted_at") or "", reverse=True)
+        return {
+            "files": trashed_items,
         }
 
     def upload_file(self, upload_file, folder_id: str = ""):
@@ -216,6 +232,82 @@ class ObjectStorageService:
             "hard_deleted": False,
         }
 
+    def restore_objects(self, object_ids: list[str]):
+        normalized_ids = self.normalize_object_ids(object_ids)
+        restored_items = []
+
+        for object_id in normalized_ids:
+            metadata = self.get_object(object_id, expected_type="file", require_active=False)
+            if metadata.get("status") != "trashed":
+                raise HTTPException(status_code=400, detail="Only trashed files can be restored")
+
+            target_parent = self.resolve_restore_parent(metadata.get("parent_id"))
+            source_key = self.resolve_object_key(metadata)
+            restored_metadata = dict(metadata)
+            restored_metadata["parent_id"] = target_parent.get("object_id") if target_parent else None
+            target_key = self.build_object_key(restored_metadata)
+
+            if source_key != target_key:
+                self.s3.copy_object(
+                    Bucket=self.bucket,
+                    CopySource={"Bucket": self.bucket, "Key": source_key},
+                    Key=target_key,
+                )
+                self.s3.delete_object(
+                    Bucket=self.bucket,
+                    Key=source_key,
+                )
+
+            self.table.update_item(
+                Key={"object_id": object_id},
+                UpdateExpression="SET parent_id = :parent_id, #status = :status, deleted_at = :deleted_at",
+                ExpressionAttributeNames={
+                    "#status": "status",
+                },
+                ExpressionAttributeValues={
+                    ":parent_id": restored_metadata.get("parent_id"),
+                    ":status": "active",
+                    ":deleted_at": None,
+                },
+                ConditionExpression="attribute_exists(object_id)",
+            )
+
+            restored_items.append({
+                "object_id": object_id,
+                "object_name": metadata.get("object_name"),
+                "parent_id": restored_metadata.get("parent_id") or "",
+            })
+
+        return {
+            "restored": restored_items,
+        }
+
+    def permanently_delete_objects(self, object_ids: list[str]):
+        normalized_ids = self.normalize_object_ids(object_ids)
+        deleted_items = []
+
+        for object_id in normalized_ids:
+            metadata = self.get_object(object_id, expected_type="file", require_active=False)
+            if metadata.get("status") != "trashed":
+                raise HTTPException(status_code=400, detail="Only trashed files can be permanently deleted")
+
+            self.s3.delete_object(
+                Bucket=self.bucket,
+                Key=self.resolve_object_key(metadata),
+            )
+            self.table.delete_item(
+                Key={"object_id": object_id},
+                ConditionExpression="attribute_exists(object_id)",
+            )
+            deleted_items.append({
+                "object_id": object_id,
+                "object_name": metadata.get("object_name"),
+            })
+
+        return {
+            "deleted": deleted_items,
+        }
+
     def get_parent_folder(self, folder_id: str):
         if not folder_id:
             return None
@@ -291,11 +383,37 @@ class ObjectStorageService:
             "file_extension": metadata.get("file_extension", ""),
         }
 
+    def serialize_trashed_object(self, metadata):
+        return {
+            "kind": metadata["object_type"],
+            "object_id": metadata["object_id"],
+            "name": metadata["object_name"],
+            "parent_id": metadata.get("parent_id") or "",
+            "parent_path": self.build_parent_display_path(metadata.get("parent_id")),
+            "deleted_at": metadata.get("deleted_at"),
+            "upload_date": metadata.get("created_at"),
+            "file_extension": metadata.get("file_extension", ""),
+        }
+
     def build_object_key(self, metadata):
         parts = self.build_object_segments(metadata)
         if metadata["object_type"] == "folder":
             return f"{'/'.join(parts)}/"
         return "/".join(parts)
+
+    def resolve_object_key(self, metadata):
+        try:
+            return self.build_object_key(metadata)
+        except HTTPException as exc:
+            if exc.status_code != 404 or metadata.get("object_type") != "file":
+                raise
+
+        object_id = metadata["object_id"]
+        matched_key = self.find_s3_key_by_object_id(object_id)
+        if matched_key:
+            return matched_key
+
+        raise HTTPException(status_code=404, detail="Object not found in storage")
 
     def build_object_segments(self, metadata):
         segments = []
@@ -333,6 +451,20 @@ class ObjectStorageService:
         response = self.table.get_item(Key={"object_id": object_id})
         return response.get("Item")
 
+    def scan_objects(self, filter_expression):
+        scan_kwargs = {"FilterExpression": filter_expression}
+        items = []
+
+        while True:
+            response = self.table.scan(**scan_kwargs)
+            items.extend(response.get("Items", []))
+            last_evaluated_key = response.get("LastEvaluatedKey")
+            if not last_evaluated_key:
+                break
+            scan_kwargs["ExclusiveStartKey"] = last_evaluated_key
+
+        return items
+
     def is_visible_child(self, metadata, parent_id: str, expected_type: str):
         if not metadata:
             return False
@@ -357,6 +489,97 @@ class ObjectStorageService:
     def extract_object_id(self, s3_key: str):
         normalized_key = s3_key.rstrip("/")
         return PurePosixPath(normalized_key).name or normalized_key
+
+    def find_s3_key_by_object_id(self, object_id: str):
+        continuation_token = None
+        exact_key = object_id
+        nested_suffix = f"/{object_id}"
+
+        while True:
+            request = {
+                "Bucket": self.bucket,
+            }
+            if continuation_token:
+                request["ContinuationToken"] = continuation_token
+
+            response = self.s3.list_objects_v2(**request)
+            for item in response.get("Contents", []):
+                key = item.get("Key", "")
+                if key == exact_key or key.endswith(nested_suffix):
+                    return key
+
+            if not response.get("IsTruncated"):
+                break
+            continuation_token = response.get("NextContinuationToken")
+
+        return None
+
+    def resolve_restore_parent(self, parent_id: str | None):
+        if not parent_id:
+            return None
+
+        parent_metadata = self.get_object_or_none(parent_id)
+        if parent_metadata and parent_metadata.get("user_id") == self.user_id and parent_metadata.get("object_type") == "folder" and parent_metadata.get("status") == "active":
+            return parent_metadata
+
+        return self.get_or_create_restored_folder()
+
+    def get_or_create_restored_folder(self):
+        for metadata in self.scan_objects(
+            filter_expression=Attr("user_id").eq(self.user_id)
+            & Attr("object_type").eq("folder")
+            & Attr("status").eq("active")
+            & Attr("object_name").eq("restored"),
+        ):
+            if metadata.get("parent_id") not in (None, ""):
+                continue
+            return metadata
+
+        object_id = str(uuid4())
+        now = self.now_iso()
+        metadata = {
+            "object_id": object_id,
+            "user_id": self.user_id,
+            "parent_id": None,
+            "object_name": "restored",
+            "object_type": "folder",
+            "file_extension": "",
+            "status": "active",
+            "created_at": now,
+            "deleted_at": None,
+        }
+
+        self.s3.put_object(
+            Bucket=self.bucket,
+            Key=self.build_object_key(metadata),
+            Body=b"",
+        )
+        self.table.put_item(Item=metadata)
+        return metadata
+
+    def build_parent_display_path(self, parent_id: str | None):
+        if not parent_id:
+            return "/"
+
+        parent_metadata = self.get_object_or_none(parent_id)
+        if not parent_metadata or parent_metadata.get("user_id") != self.user_id or parent_metadata.get("object_type") != "folder":
+            return "/restored/"
+
+        breadcrumbs = self.build_breadcrumbs(parent_metadata)
+        return self.build_display_prefix(breadcrumbs)
+
+    @staticmethod
+    def normalize_object_ids(object_ids: list[str]):
+        normalized_ids = []
+        for object_id in object_ids:
+            normalized_object_id = str(object_id or "").strip()
+            if normalized_object_id:
+                normalized_ids.append(normalized_object_id)
+
+        if not normalized_ids:
+            raise HTTPException(status_code=400, detail="At least one object id is required")
+
+        return normalized_ids
 
     @staticmethod
     def get_file_extension(filename: str):
