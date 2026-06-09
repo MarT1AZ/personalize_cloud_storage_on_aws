@@ -176,11 +176,27 @@ class ObjectStorageService:
 
     def delete_object(self, object_id: str):
         metadata = self.get_object(object_id, require_active=True)
+
+        if metadata["object_type"] == "folder":
+            if self.has_active_children(metadata["object_id"]):
+                raise HTTPException(status_code=400, detail="Folder is not empty")
+
+            self.s3.delete_object(
+                Bucket=self.bucket,
+                Key=self.build_object_key(metadata),
+            )
+            self.table.delete_item(
+                Key={"object_id": object_id},
+                ConditionExpression="attribute_exists(object_id)",
+            )
+
+            return {
+                "object_id": object_id,
+                "deleted": True,
+                "hard_deleted": True,
+            }
+
         deleted_at = self.now_iso()
-
-        if metadata["object_type"] == "folder" and self.has_active_children(metadata["object_id"]):
-            raise HTTPException(status_code=400, detail="Folder is not empty")
-
         self.table.update_item(
             Key={"object_id": object_id},
             UpdateExpression="SET #status = :status, deleted_at = :deleted_at",
@@ -197,6 +213,7 @@ class ObjectStorageService:
         return {
             "object_id": object_id,
             "deleted_at": deleted_at,
+            "hard_deleted": False,
         }
 
     def get_parent_folder(self, folder_id: str):
