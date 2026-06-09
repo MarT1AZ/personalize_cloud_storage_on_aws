@@ -7,7 +7,7 @@ from app.auth_dependencies import get_authenticated_user
 from app.auth_models import UserProfile
 from app.auth_router import router as auth_router
 from app.config import settings
-from app.services.s3_storage_service import S3StorageService
+from app.services.object_storage_service import ObjectStorageService
 
 app = FastAPI()
 
@@ -18,7 +18,7 @@ class RenameRequest(BaseModel):
 
 class CreateFolderRequest(BaseModel):
     name: str
-    prefix: str = ""
+    parent_id: str = ""
 
 
 app.add_middleware(
@@ -33,7 +33,11 @@ app.include_router(auth_router)
 
 
 def get_storage_service(current_user: UserProfile = Depends(get_authenticated_user)):
-    return S3StorageService(current_user.bucket.main_bucket)
+    return ObjectStorageService(
+        bucket=current_user.bucket.main_bucket,
+        user_id=current_user.username,
+        metadata_table=settings.file_metadata_table,
+    )
 
 
 @app.get("/api/whoami")
@@ -56,57 +60,57 @@ def current_bucket(current_user: UserProfile = Depends(get_authenticated_user)):
 
 @app.get("/api/files")
 def list_files(
-    prefix: str = "",
-    storage_service: S3StorageService = Depends(get_storage_service),
+    folder_id: str = "",
+    storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.list_files(prefix)
+    return storage_service.list_files(folder_id)
 
 
 @app.post("/api/upload")
 async def upload(
     file: UploadFile = File(...),
-    prefix: str = Form(""),
-    storage_service: S3StorageService = Depends(get_storage_service),
+    folder_id: str = Form(""),
+    storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.upload_file(file, prefix)
+    return storage_service.upload_file(file, folder_id)
 
 
-@app.get("/api/files/{key:path}/download")
+@app.get("/api/files/{object_id}/download")
 def get_download_url(
-    key: str,
-    storage_service: S3StorageService = Depends(get_storage_service),
+    object_id: str,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.get_download_url(key)
+    return storage_service.get_download_url(object_id)
 
 
-@app.post("/api/files/{key:path}/rename")
+@app.post("/api/files/{object_id}/rename")
 def rename_file(
-    key: str,
+    object_id: str,
     request: RenameRequest,
-    storage_service: S3StorageService = Depends(get_storage_service),
+    storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.rename_file(key, request.new_name)
+    return storage_service.rename_file(object_id, request.new_name)
 
 
 @app.post("/api/folders")
 def create_folder(
     request: CreateFolderRequest,
-    storage_service: S3StorageService = Depends(get_storage_service),
+    storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.create_folder(request.prefix, request.name)
+    return storage_service.create_folder(request.parent_id, request.name)
 
 
-@app.delete("/api/files/{key:path}")
+@app.delete("/api/files/{object_id}")
 def delete_file(
-    key: str,
-    storage_service: S3StorageService = Depends(get_storage_service),
+    object_id: str,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.delete_key(key)
+    return storage_service.delete_object(object_id)
 
 
 @app.delete("/api/delete")
 def delete_file_alias(
-    key: str,
-    storage_service: S3StorageService = Depends(get_storage_service),
+    object_id: str,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.delete_key(key)
+    return storage_service.delete_object(object_id)
