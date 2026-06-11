@@ -18,6 +18,8 @@ Backend settings now come from a root `.env` file, with `.env.template` provided
 - Show file name, size, and upload date for each item
 - Rename a file
 - Keep the original file extension during rename
+- Upload duplicate active file names as copy variants automatically
+- Prevent creating a folder when an active folder with the same name already exists
 - Enable trash mode to delete files and folders from the list
 - Delete by path
 - Delete on item card

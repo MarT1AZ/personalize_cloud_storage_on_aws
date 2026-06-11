@@ -3,11 +3,15 @@ from pathlib import PurePosixPath
 import secrets
 
 import boto3
-from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.conditions import Attr, Key
+from botocore.exceptions import ClientError
 from fastapi import HTTPException
 
 
 class ObjectStorageService:
+    FILE_NAME_INDEX = "file_name_index"
+    FOLDER_NAME_INDEX = "folder_name_index"
+
     def __init__(
         self,
         bucket: str,
@@ -80,6 +84,10 @@ class ObjectStorageService:
         file_name = (upload_file.filename or "").strip()
         if not file_name:
             raise HTTPException(status_code=400, detail="File name is required")
+        file_name = self.build_upload_file_name(
+            parent_folder["folder_id"] if parent_folder else None,
+            file_name,
+        )
 
         metadata = {
             "file_id": file_id,
@@ -111,6 +119,8 @@ class ObjectStorageService:
         normalized_name = name.strip().strip("/")
         if not normalized_name:
             raise HTTPException(status_code=400, detail="Folder name is required")
+        if self.has_active_folder_with_name(parent_folder["folder_id"] if parent_folder else None, normalized_name):
+            raise HTTPException(status_code=400, detail="An active folder with this name already exists")
 
         folder_id = self.generate_short_id()
         now = self.now_iso()
@@ -542,6 +552,70 @@ class ObjectStorageService:
             return None
 
         return response.get("ContentLength")
+
+    def build_upload_file_name(self, parent_folder_id: str | None, requested_name: str):
+        if not self.has_active_file_with_name(parent_folder_id, requested_name):
+            return requested_name
+
+        stem = PurePosixPath(requested_name).stem or requested_name
+        suffix = self.get_file_extension(requested_name)
+        candidate = f"{stem}_copy{suffix}"
+        copy_number = 2
+
+        while self.has_active_file_with_name(parent_folder_id, candidate):
+            candidate = f"{stem}_copy_{copy_number}{suffix}"
+            copy_number += 1
+
+        return candidate
+
+    def has_active_file_with_name(self, parent_folder_id: str | None, file_name: str):
+        items = self.query_items_by_name(
+            table=self.file_table,
+            index_name=self.FILE_NAME_INDEX,
+            name_key="file_name",
+            name_value=file_name,
+        )
+        return any(
+            item.get("user_id") == self.user_id
+            and self.same_parent_folder(item.get("parent_folder_id"), parent_folder_id)
+            and item.get("status") == "active"
+            for item in items
+        )
+
+    def has_active_folder_with_name(self, parent_folder_id: str | None, folder_name: str):
+        items = self.query_items_by_name(
+            table=self.folder_table,
+            index_name=self.FOLDER_NAME_INDEX,
+            name_key="folder_name",
+            name_value=folder_name,
+        )
+        return any(
+            item.get("user_id") == self.user_id
+            and self.same_parent_folder(item.get("parent_folder_id"), parent_folder_id)
+            and item.get("status") == "active"
+            for item in items
+        )
+
+    def query_items_by_name(self, table, index_name: str, name_key: str, name_value: str):
+        try:
+            response = table.query(
+                IndexName=index_name,
+                KeyConditionExpression=Key(name_key).eq(name_value),
+            )
+            return response.get("Items", [])
+        except ClientError as exc:
+            error_code = exc.response.get("Error", {}).get("Code")
+            if error_code not in {"ResourceNotFoundException", "ValidationException"}:
+                raise
+
+        return self.scan_table(
+            table,
+            Attr(name_key).eq(name_value),
+        )
+
+    @staticmethod
+    def same_parent_folder(left_parent_folder_id: str | None, right_parent_folder_id: str | None):
+        return (left_parent_folder_id or None) == (right_parent_folder_id or None)
 
     @staticmethod
     def normalize_file_ids(file_ids: list[str]):
