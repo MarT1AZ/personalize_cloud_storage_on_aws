@@ -117,16 +117,9 @@ Backend Docker dev run:
 - CORS is enabled in the backend specifically for local frontend development
 
 ## Notes For Future Work
-- `backend/run.txt` contains older example commands and sensitive-looking values, so treat it carefully
-- Use `head_object` only when a user opens a file detail view for fuller metadata
-- Rename should preserve the original extension even when the user omits it or types a different one
-- Add a trash feature similar to Google Drive so deleted files can be restored later
-- Find a way to restore trashed files without using S3 copy plus delete when the visible folder path changes
-- Keep folder browsing based on S3 prefixes and delimiters so deep nested paths continue to work
-- Keep search and sort in the current folder view based on the existing `list_objects_v2` response unless the user explicitly asks for deeper metadata
-- Large file renames may take longer, so the UI should make that delay clear during the rename flow
-- Frontend logout currently clears the saved JWT locally, so add future backend logout or token revocation support if server-side sign-out is needed
-- Refactor the frontend app UI into multiple files so auth, file browsing, and side-panel tools are easier to maintain
+- Handle duplicate file and folder names during creation
+- Handle name collisions during restore for both files and folders
+
 
 ## Feature Tracking
 - Keep this file updated whenever a feature is added, removed, or merged
