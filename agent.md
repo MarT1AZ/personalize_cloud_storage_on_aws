@@ -122,7 +122,6 @@ Backend Docker dev run:
 - Rename should preserve the original extension even when the user omits it or types a different one
 - Add a trash feature similar to Google Drive so deleted files can be restored later
 - Find a way to restore trashed files without using S3 copy plus delete when the visible folder path changes
-- Consider a restore design that rebuilds the old path instead of sending files to `/restored/`: keep deleted folders as special metadata-only records so a file restore can recreate just the missing folder path chain, without restoring other files that used to live inside those folders
 - Keep folder browsing based on S3 prefixes and delimiters so deep nested paths continue to work
 - Keep search and sort in the current folder view based on the existing `list_objects_v2` response unless the user explicitly asks for deeper metadata
 - Large file renames may take longer, so the UI should make that delay clear during the rename flow

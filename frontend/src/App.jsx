@@ -75,8 +75,8 @@ function formatDateTime(value) {
 
 function sortItems(items, sortMode) {
   function compareAlphabet(left, right, direction = 'asc') {
-    const leftValue = left.name || left.path || left.object_id;
-    const rightValue = right.name || right.path || right.object_id;
+    const leftValue = left.name || left.path || left.file_id;
+    const rightValue = right.name || right.path || right.file_id;
     const result = leftValue.localeCompare(rightValue, undefined, { sensitivity: 'base' });
     return direction === 'desc' ? result * -1 : result;
   }
@@ -431,7 +431,7 @@ export default function App() {
       setError('');
       setSuccess('');
       setDeleting(objectId);
-      const item = [...folders, ...files].find((entry) => entry.object_id === objectId);
+      const item = [...folders, ...files].find((entry) => entry.file_id === objectId);
       await api(`/files/${encodeURIComponent(objectId)}`, { method: 'DELETE', authToken });
       if (normalizeId(deleteObjectId) === objectId) {
         setDeleteObjectId('');
@@ -465,7 +465,7 @@ export default function App() {
       setTrashAction('restore');
       const data = await api('/trash/restore', {
         method: 'POST',
-        body: JSON.stringify({ object_ids: objectIds }),
+        body: JSON.stringify({ file_ids: objectIds }),
         authToken,
       });
       setSelectedTrashIds({});
@@ -493,7 +493,7 @@ export default function App() {
       setTrashAction('delete');
       const data = await api('/trash/delete', {
         method: 'POST',
-        body: JSON.stringify({ object_ids: objectIds }),
+        body: JSON.stringify({ file_ids: objectIds }),
         authToken,
       });
       setSelectedTrashIds({});
@@ -520,7 +520,7 @@ export default function App() {
       if (!data?.url) {
         throw new Error('Download URL not found');
       }
-      const item = [...folders, ...files].find((entry) => entry.object_id === objectId);
+      const item = [...folders, ...files].find((entry) => entry.file_id === objectId);
       const link = document.createElement('a');
       link.href = data.url;
       link.rel = 'noopener';
@@ -559,33 +559,33 @@ export default function App() {
   }
 
   async function handleRename(file) {
-    const draft = renameDrafts[file.object_id] || '';
+    const draft = renameDrafts[file.file_id] || '';
     const finalName = buildRenamedObjectName(draft, file.file_extension || '');
     if (!finalName) return;
 
     try {
       setError('');
       setSuccess('');
-      setRenaming(file.object_id);
-      setRenameNotices((current) => ({ ...current, [file.object_id]: null }));
-      const data = await api(`/files/${encodeURIComponent(file.object_id)}/rename`, {
+      setRenaming(file.file_id);
+      setRenameNotices((current) => ({ ...current, [file.file_id]: null }));
+      const data = await api(`/files/${encodeURIComponent(file.file_id)}/rename`, {
         method: 'POST',
         body: JSON.stringify({ new_name: draft }),
         authToken,
       });
-      setRenameDrafts((current) => ({ ...current, [file.object_id]: '' }));
+      setRenameDrafts((current) => ({ ...current, [file.file_id]: '' }));
       setEditingKey('');
       setActionMenuKey('');
       setRecentRenames((current) => ({
         ...current,
-        [file.object_id]: {
-          oldName: file.name || file.object_id,
+        [file.file_id]: {
+          oldName: file.name || file.file_id,
           newName: data?.renamed_name || finalName,
         },
       }));
       setRenameNotices((current) => ({
         ...current,
-        [file.object_id]: {
+        [file.file_id]: {
           type: 'success',
           message: `Renamed to ${data?.renamed_name || finalName}`,
         },
@@ -594,7 +594,7 @@ export default function App() {
     } catch (err) {
       setRenameNotices((current) => ({
         ...current,
-        [file.object_id]: {
+        [file.file_id]: {
           type: 'error',
           message: err.message || 'Rename failed',
         },
@@ -623,11 +623,11 @@ export default function App() {
 
   function toggleSelectAllTrash() {
     if (visibleItems.length === 0) return;
-    const shouldSelectAll = visibleItems.some((item) => !selectedTrashIds[item.object_id]);
+    const shouldSelectAll = visibleItems.some((item) => !selectedTrashIds[item.file_id]);
     const nextSelection = {};
 
     visibleItems.forEach((item) => {
-      nextSelection[item.object_id] = shouldSelectAll;
+      nextSelection[item.file_id] = shouldSelectAll;
     });
 
     setSelectedTrashIds(nextSelection);
@@ -818,16 +818,16 @@ export default function App() {
 
                 {visibleItems.map((item) => {
                   if (viewMode === 'trash') {
-                    const isSelected = !!selectedTrashIds[item.object_id];
+                    const isSelected = !!selectedTrashIds[item.file_id];
                     return (
-                      <li className="file-row" key={item.object_id}>
+                      <li className="file-row" key={item.file_id}>
                         <div className="file-meta">
                           <div className="file-name-row">
                             <label className="folder-open-button">
                               <input
                                 type="checkbox"
                                 checked={isSelected}
-                                onChange={() => toggleTrashSelection(item.object_id)}
+                                onChange={() => toggleTrashSelection(item.file_id)}
                               />
                               <span className="file-name">{item.name || 'Unnamed file'}</span>
                             </label>
@@ -846,7 +846,7 @@ export default function App() {
                         </div>
                         <div className="row-actions">
                           <button className="secondary-button" onClick={() => {
-                            setSelectedTrashIds({ [item.object_id]: true });
+                            setSelectedTrashIds({ [item.file_id]: true });
                             setDeleteConfirmKey('');
                           }} type="button">
                             Select
@@ -858,24 +858,24 @@ export default function App() {
 
                   if (item.kind === 'folder') {
                     return (
-                      <li className="file-row folder-row" key={item.object_id}>
+                      <li className="file-row folder-row" key={item.file_id}>
                         <div className="folder-row-shell">
-                          <button className="folder-open-button" onClick={() => handleOpenFolder(item.object_id)} type="button">
+                          <button className="folder-open-button" onClick={() => handleOpenFolder(item.file_id)} type="button">
                             <span className="folder-icon" aria-hidden="true">DIR</span>
                             <span className="folder-label">{item.name}</span>
                             <span className="folder-path">{item.path}</span>
                           </button>
                           {deleteMode ? (
                             <div className="row-actions">
-                              {deleteConfirmKey === item.object_id ? (
+                              {deleteConfirmKey === item.file_id ? (
                                 <>
-                                  <button className="danger-button" onClick={() => handleDelete(item.object_id)} disabled={deleting === item.object_id} type="button">
-                                    {deleting === item.object_id ? 'Deleting...' : 'Confirm'}
+                                  <button className="danger-button" onClick={() => handleDelete(item.file_id)} disabled={deleting === item.file_id} type="button">
+                                    {deleting === item.file_id ? 'Deleting...' : 'Confirm'}
                                   </button>
                                   <button className="ghost-button" onClick={() => setDeleteConfirmKey('')} type="button">Cancel</button>
                                 </>
                               ) : (
-                                <button className="danger-button" onClick={() => setDeleteConfirmKey(item.object_id)} type="button">Delete</button>
+                                <button className="danger-button" onClick={() => setDeleteConfirmKey(item.file_id)} type="button">Delete</button>
                               )}
                             </div>
                           ) : null}
@@ -884,23 +884,23 @@ export default function App() {
                     );
                   }
 
-                  const renamePreview = buildRenamedObjectName(renameDrafts[item.object_id] || '', item.file_extension || '');
+                  const renamePreview = buildRenamedObjectName(renameDrafts[item.file_id] || '', item.file_extension || '');
                   return (
                     <li
                       className="file-row"
-                      key={item.object_id}
-                      data-file-key={item.object_id}
+                      key={item.file_id}
+                      data-file-key={item.file_id}
                       onContextMenu={(event) => {
                         event.preventDefault();
-                        setActionMenuKey((current) => (current === item.object_id ? '' : item.object_id));
+                        setActionMenuKey((current) => (current === item.file_id ? '' : item.file_id));
                       }}
                     >
                       <div className="file-meta">
                         <div className="file-name-row">
                           <div className="file-name">{item.name || 'Unnamed file'}</div>
-                          {recentRenames[item.object_id] ? (
+                          {recentRenames[item.file_id] ? (
                             <div className="rename-tag">
-                              {recentRenames[item.object_id].oldName} {'>>'} {recentRenames[item.object_id].newName}
+                              {recentRenames[item.file_id].oldName} {'>>'} {recentRenames[item.file_id].newName}
                             </div>
                           ) : null}
                         </div>
@@ -915,12 +915,12 @@ export default function App() {
                             <dd>{formatDateTime(item.upload_date)}</dd>
                           </div>
                         </dl>
-                        {actionMenuKey === item.object_id ? (
+                        {actionMenuKey === item.file_id ? (
                           <div className="action-menu">
                             <button
                               className="secondary-button"
                               onClick={() => {
-                                setEditingKey(item.object_id);
+                                setEditingKey(item.file_id);
                                 setActionMenuKey('');
                               }}
                               type="button"
@@ -929,34 +929,34 @@ export default function App() {
                             </button>
                           </div>
                         ) : null}
-                        {editingKey === item.object_id ? (
+                        {editingKey === item.file_id ? (
                           <div className="rename-box">
                             <label className="field grow">
                               <span>Rename file</span>
                               <input
                                 type="text"
-                                value={renameDrafts[item.object_id] || ''}
-                                onChange={(event) => setRenameDrafts((current) => ({ ...current, [item.object_id]: event.target.value }))}
+                                value={renameDrafts[item.file_id] || ''}
+                                onChange={(event) => setRenameDrafts((current) => ({ ...current, [item.file_id]: event.target.value }))}
                                 placeholder="new-file-name"
                               />
                             </label>
                             <div className="rename-preview">
                               Final name: {renamePreview || 'Enter a new name'}
                             </div>
-                            {renameNotices[item.object_id] ? (
-                              <div className={renameNotices[item.object_id].type === 'success' ? 'inline-success-box' : 'inline-error-box'}>
-                                {renameNotices[item.object_id].message}
+                            {renameNotices[item.file_id] ? (
+                              <div className={renameNotices[item.file_id].type === 'success' ? 'inline-success-box' : 'inline-error-box'}>
+                                {renameNotices[item.file_id].message}
                               </div>
                             ) : null}
                             <div className="rename-actions">
-                              <button className="secondary-button" onClick={() => handleRename(item)} disabled={!renamePreview || renaming === item.object_id} type="button">
-                                {renaming === item.object_id ? 'Renaming...' : 'Rename'}
+                              <button className="secondary-button" onClick={() => handleRename(item)} disabled={!renamePreview || renaming === item.file_id} type="button">
+                                {renaming === item.file_id ? 'Renaming...' : 'Rename'}
                               </button>
                               <button
                                 className="ghost-button"
                                 onClick={() => {
                                   setEditingKey('');
-                                  setRenameNotices((current) => ({ ...current, [item.object_id]: null }));
+                                  setRenameNotices((current) => ({ ...current, [item.file_id]: null }));
                                 }}
                                 type="button"
                               >
@@ -968,22 +968,22 @@ export default function App() {
                       </div>
                       <div className="row-actions">
                         {deleteMode ? (
-                          deleteConfirmKey === item.object_id ? (
+                          deleteConfirmKey === item.file_id ? (
                             <>
-                              <button className="danger-button" onClick={() => handleDelete(item.object_id)} disabled={deleting === item.object_id} type="button">
-                                {deleting === item.object_id ? 'Deleting...' : 'Confirm'}
+                              <button className="danger-button" onClick={() => handleDelete(item.file_id)} disabled={deleting === item.file_id} type="button">
+                                {deleting === item.file_id ? 'Deleting...' : 'Confirm'}
                               </button>
                               <button className="ghost-button" onClick={() => setDeleteConfirmKey('')} type="button">Cancel</button>
                             </>
                           ) : (
-                            <button className="danger-button" onClick={() => setDeleteConfirmKey(item.object_id)} type="button">Delete</button>
+                            <button className="danger-button" onClick={() => setDeleteConfirmKey(item.file_id)} type="button">Delete</button>
                           )
                         ) : null}
-                        <button className="ghost-button" onClick={() => setActionMenuKey((current) => (current === item.object_id ? '' : item.object_id))} type="button">
+                        <button className="ghost-button" onClick={() => setActionMenuKey((current) => (current === item.file_id ? '' : item.file_id))} type="button">
                           Actions
                         </button>
-                        <button className="secondary-button" onClick={() => handleDownload(item.object_id)} disabled={downloading === item.object_id} type="button">
-                          {downloading === item.object_id ? 'Preparing...' : 'Download'}
+                        <button className="secondary-button" onClick={() => handleDownload(item.file_id)} disabled={downloading === item.file_id} type="button">
+                          {downloading === item.file_id ? 'Preparing...' : 'Download'}
                         </button>
                       </div>
                     </li>
@@ -1035,7 +1035,7 @@ export default function App() {
                 </div>
                 <div className="stack-form">
                   <label className="field">
-                    <span>Object id</span>
+                    <span>File id</span>
                     <input type="text" value={deleteObjectId} onChange={(event) => setDeleteObjectId(event.target.value)} placeholder="uuid" />
                   </label>
                   <button className="danger-button" onClick={() => handleDelete(deleteObjectId)} disabled={!normalizeId(deleteObjectId) || deleting} type="button">

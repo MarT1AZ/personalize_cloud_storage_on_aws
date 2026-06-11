@@ -32,6 +32,7 @@ class Settings:
     cors_origins: list[str]
     backend_domain: str
     file_metadata_table: str
+    folder_metadata_table: str
 
 
 def build_settings():
@@ -46,12 +47,14 @@ def build_settings():
 
     backend_domain = os.getenv("BACKEND_DOMAIN", "http://localhost:8000").strip() or "http://localhost:8000"
     file_metadata_table = os.getenv("FILE_METADATA_TABLE", "file-meta-data").strip() or "file-meta-data"
+    folder_metadata_table = os.getenv("FOLDER_METADATA_TABLE", "folder-meta-data").strip() or "folder-meta-data"
 
     return Settings(
         s3_bucket=s3_bucket,
         cors_origins=cors_origins,
         backend_domain=backend_domain,
         file_metadata_table=file_metadata_table,
+        folder_metadata_table=folder_metadata_table,
     )
 
 

@@ -22,7 +22,7 @@ class CreateFolderRequest(BaseModel):
 
 
 class ObjectSelectionRequest(BaseModel):
-    object_ids: list[str]
+    file_ids: list[str]
 
 
 app.add_middleware(
@@ -40,7 +40,8 @@ def get_storage_service(current_user: UserProfile = Depends(get_authenticated_us
     return ObjectStorageService(
         bucket=current_user.bucket.main_bucket,
         user_id=current_user.username,
-        metadata_table=settings.file_metadata_table,
+        file_metadata_table=settings.file_metadata_table,
+        folder_metadata_table=settings.folder_metadata_table,
     )
 
 
@@ -86,21 +87,21 @@ async def upload(
     return storage_service.upload_file(file, folder_id)
 
 
-@app.get("/api/files/{object_id}/download")
+@app.get("/api/files/{file_id}/download")
 def get_download_url(
-    object_id: str,
+    file_id: str,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.get_download_url(object_id)
+    return storage_service.get_download_url(file_id)
 
 
-@app.post("/api/files/{object_id}/rename")
+@app.post("/api/files/{file_id}/rename")
 def rename_file(
-    object_id: str,
+    file_id: str,
     request: RenameRequest,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.rename_file(object_id, request.new_name)
+    return storage_service.rename_file(file_id, request.new_name)
 
 
 @app.post("/api/folders")
@@ -111,12 +112,12 @@ def create_folder(
     return storage_service.create_folder(request.parent_id, request.name)
 
 
-@app.delete("/api/files/{object_id}")
+@app.delete("/api/files/{file_id}")
 def delete_file(
-    object_id: str,
+    file_id: str,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.delete_object(object_id)
+    return storage_service.delete_object(file_id)
 
 
 @app.post("/api/trash/restore")
@@ -124,7 +125,7 @@ def restore_trash(
     request: ObjectSelectionRequest,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.restore_objects(request.object_ids)
+    return storage_service.restore_objects(request.file_ids)
 
 
 @app.post("/api/trash/delete")
@@ -132,12 +133,12 @@ def delete_trash(
     request: ObjectSelectionRequest,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.permanently_delete_objects(request.object_ids)
+    return storage_service.permanently_delete_objects(request.file_ids)
 
 
 @app.delete("/api/delete")
 def delete_file_alias(
-    object_id: str,
+    file_id: str,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.delete_object(object_id)
+    return storage_service.delete_object(file_id)
