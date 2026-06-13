@@ -128,6 +128,14 @@ def restore_trash(
     return storage_service.restore_objects(request.file_ids)
 
 
+@app.post("/api/trash/soft-delete")
+def soft_delete_trash(
+    request: ObjectSelectionRequest,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.soft_delete_files(request.file_ids)
+
+
 @app.post("/api/trash/delete")
 def delete_trash(
     request: ObjectSelectionRequest,

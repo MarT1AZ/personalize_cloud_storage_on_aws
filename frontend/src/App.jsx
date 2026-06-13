@@ -185,6 +185,7 @@ export default function App() {
   const [recentRenames, setRecentRenames] = useState({});
   const [recentDeletes, setRecentDeletes] = useState([]);
   const [selectedTrashIds, setSelectedTrashIds] = useState({});
+  const [selectedDeleteIds, setSelectedDeleteIds] = useState({});
 
   const visibleItems = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
@@ -209,6 +210,8 @@ export default function App() {
 
   const totalItemCount = viewMode === 'trash' ? trashedFiles.length : folders.length + files.length;
   const selectedTrashCount = Object.values(selectedTrashIds).filter(Boolean).length;
+  const visibleFileItems = useMemo(() => visibleItems.filter((item) => item.kind === 'file'), [visibleItems]);
+  const selectedDeleteCount = Object.values(selectedDeleteIds).filter(Boolean).length;
 
   function clearWorkspaceState() {
     setFolders([]);
@@ -243,6 +246,7 @@ export default function App() {
     setRecentRenames({});
     setRecentDeletes([]);
     setSelectedTrashIds({});
+    setSelectedDeleteIds({});
   }
 
   function handleLogout() {
@@ -280,6 +284,7 @@ export default function App() {
       setFiles(Array.isArray(data?.files) ? data.files : []);
       setTrashedFiles([]);
       setSelectedTrashIds({});
+      setSelectedDeleteIds({});
       setDeleteMode(false);
       setViewMode('files');
     } catch (err) {
@@ -313,6 +318,7 @@ export default function App() {
       setBreadcrumbItems([{ label: 'Trash', folder_id: '' }]);
       setTrashedFiles(Array.isArray(data?.files) ? data.files : []);
       setSelectedTrashIds({});
+      setSelectedDeleteIds({});
       setDeleteMode(false);
       setDeleteConfirmKey('');
       setViewMode('trash');
@@ -633,6 +639,61 @@ export default function App() {
     setSelectedTrashIds(nextSelection);
   }
 
+  function toggleDeleteSelection(objectId) {
+    setSelectedDeleteIds((current) => ({
+      ...current,
+      [objectId]: !current[objectId],
+    }));
+  }
+
+  function toggleSelectAllFilesForDelete() {
+    if (visibleFileItems.length === 0) return;
+    const shouldSelectAll = visibleFileItems.some((item) => !selectedDeleteIds[item.file_id]);
+    const nextSelection = {};
+
+    visibleFileItems.forEach((item) => {
+      nextSelection[item.file_id] = shouldSelectAll;
+    });
+
+    setSelectedDeleteIds(nextSelection);
+  }
+
+  async function handleSoftDeleteSelected() {
+    const fileIds = Object.entries(selectedDeleteIds)
+      .filter(([, isSelected]) => isSelected)
+      .map(([fileId]) => fileId);
+
+    if (fileIds.length === 0) return;
+
+    try {
+      setError('');
+      setSuccess('');
+      setTrashAction('soft-delete');
+      const selectedPaths = files
+        .filter((item) => fileIds.includes(item.file_id))
+        .map((item) => item.path)
+        .filter(Boolean);
+      const data = await api('/trash/soft-delete', {
+        method: 'POST',
+        body: JSON.stringify({ file_ids: fileIds }),
+        authToken,
+      });
+      setSelectedDeleteIds({});
+      setDeleteConfirmKey('');
+      setRecentDeletes((current) => {
+        const next = [...selectedPaths, ...current.filter((entry) => !selectedPaths.includes(entry))];
+        return next.slice(0, 5);
+      });
+      const deletedCount = Array.isArray(data?.deleted) ? data.deleted.length : fileIds.length;
+      setSuccess(`Moved ${deletedCount} file${deletedCount === 1 ? '' : 's'} to trash.`);
+      await loadFiles(currentFolderId, true, true, true);
+    } catch (err) {
+      setError(err.message || 'Move to trash failed');
+    } finally {
+      setTrashAction('');
+    }
+  }
+
   if (authChecking) {
     return (
       <main className="login-shell">
@@ -688,6 +749,7 @@ export default function App() {
                 return;
               }
               setDeleteConfirmKey('');
+              setSelectedDeleteIds({});
               setDeleteMode((current) => !current);
             }}
             disabled={viewMode === 'trash'}
@@ -779,6 +841,19 @@ export default function App() {
                 <div className="delete-history-title">Recently deleted</div>
                 <div className="delete-history-list">
                   {recentDeletes.map((item) => <div className="delete-tag" key={item}>{item}</div>)}
+                </div>
+              </div>
+            ) : null}
+            {viewMode === 'files' && deleteMode ? (
+              <div className="delete-history-box">
+                <div className="delete-history-title">Delete selection</div>
+                <div className="delete-history-list">
+                  <button className="secondary-button" onClick={toggleSelectAllFilesForDelete} disabled={visibleFileItems.length === 0 || !!trashAction} type="button">
+                    {selectedDeleteCount === visibleFileItems.length && visibleFileItems.length > 0 ? 'Clear visible files' : 'Select visible files'}
+                  </button>
+                  <button className="danger-button" onClick={handleSoftDeleteSelected} disabled={selectedDeleteCount === 0 || !!trashAction} type="button">
+                    {trashAction === 'soft-delete' ? 'Moving...' : `Move selected to trash (${selectedDeleteCount})`}
+                  </button>
                 </div>
               </div>
             ) : null}
@@ -897,6 +972,15 @@ export default function App() {
                     >
                       <div className="file-meta">
                         <div className="file-name-row">
+                          {deleteMode ? (
+                            <label className="folder-open-button">
+                              <input
+                                type="checkbox"
+                                checked={!!selectedDeleteIds[item.file_id]}
+                                onChange={() => toggleDeleteSelection(item.file_id)}
+                              />
+                            </label>
+                          ) : null}
                           <div className="file-name">{item.name || 'Unnamed file'}</div>
                           {recentRenames[item.file_id] ? (
                             <div className="rename-tag">

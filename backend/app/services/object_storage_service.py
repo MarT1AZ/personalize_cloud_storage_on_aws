@@ -232,6 +232,23 @@ class ObjectStorageService:
             "restored": restored_items,
         }
 
+    def soft_delete_files(self, file_ids: list[str]):
+        normalized_ids = self.normalize_file_ids(file_ids)
+        deleted_items = []
+
+        for file_id in normalized_ids:
+            metadata = self.get_file(file_id, require_active=True)
+            result = self.soft_delete_file(metadata)
+            deleted_items.append({
+                "file_id": file_id,
+                "object_name": metadata.get("file_name"),
+                "deleted_at": result.get("deleted_at"),
+            })
+
+        return {
+            "deleted": deleted_items,
+        }
+
     def permanently_delete_objects(self, file_ids: list[str]):
         normalized_ids = self.normalize_file_ids(file_ids)
         deleted_items = []
