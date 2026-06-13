@@ -33,6 +33,7 @@ class Settings:
     backend_domain: str
     file_metadata_table: str
     folder_metadata_table: str
+    dev_log_table: str
 
 
 def build_settings():
@@ -48,6 +49,7 @@ def build_settings():
     backend_domain = os.getenv("BACKEND_DOMAIN", "http://localhost:8000").strip() or "http://localhost:8000"
     file_metadata_table = os.getenv("FILE_METADATA_TABLE", "file-meta-data").strip() or "file-meta-data"
     folder_metadata_table = os.getenv("FOLDER_METADATA_TABLE", "folder-meta-data").strip() or "folder-meta-data"
+    dev_log_table = os.getenv("DEV_LOG_TABLE", "dev_log").strip() or "dev_log"
 
     return Settings(
         s3_bucket=s3_bucket,
@@ -55,6 +57,7 @@ def build_settings():
         backend_domain=backend_domain,
         file_metadata_table=file_metadata_table,
         folder_metadata_table=folder_metadata_table,
+        dev_log_table=dev_log_table,
     )
 
 

@@ -11,6 +11,9 @@ from fastapi import HTTPException
 class ObjectStorageService:
     PARENT_FOLDER_INDEX = "parent_folder_id_index"
     ROOT_PARENT_FOLDER_ID = "__root__"
+    DEV_LOG_STATUS_ACTIVE = "active"
+    DEV_LOG_STATUS_ONGOING = "ongoing"
+    DEV_LOG_STATUS_DONE = "done"
 
     def __init__(
         self,
@@ -18,6 +21,7 @@ class ObjectStorageService:
         user_id: str,
         file_metadata_table: str,
         folder_metadata_table: str,
+        dev_log_table: str,
         s3_client=None,
         dynamodb_resource=None,
     ):
@@ -27,6 +31,7 @@ class ObjectStorageService:
         self.dynamodb = dynamodb_resource or boto3.resource("dynamodb")
         self.file_table = self.dynamodb.Table(file_metadata_table)
         self.folder_table = self.dynamodb.Table(folder_metadata_table)
+        self.dev_log_table = self.dynamodb.Table(dev_log_table)
 
     def list_files(self, folder_id: str = ""):
         current_folder = self.get_parent_folder(folder_id)
@@ -198,6 +203,320 @@ class ObjectStorageService:
             return self.soft_delete_folder(folder_metadata)
 
         raise HTTPException(status_code=404, detail="Object not found")
+
+    def get_dev_deletion_state(self):
+        metadata = self.get_active_dev_deletion_log()
+        if not metadata:
+            return {
+                "dev_deletion": False,
+                "dev_deletion_root_id": "",
+                "dev_deletion_root_parent_id": "",
+                "dev_deletion_phase": "idle",
+            }
+
+        return {
+            "dev_deletion": metadata.get("status") in {self.DEV_LOG_STATUS_ACTIVE, self.DEV_LOG_STATUS_ONGOING},
+            "dev_deletion_root_id": str(metadata.get("root_folder_id") or "").strip(),
+            "dev_deletion_root_parent_id": str(metadata.get("root_parent_folder_id") or "").strip(),
+            "dev_deletion_phase": str(metadata.get("phase") or "idle").strip() or "idle",
+            "dev_deletion_log_id": str(metadata.get("log_id") or "").strip(),
+            "dev_deletion_status": str(metadata.get("status") or "").strip(),
+        }
+
+    def dev_hard_delete_folder(self, folder_id: str = ""):
+        normalized_folder_id = self.normalize_id(folder_id)
+        active_log = self.get_active_dev_deletion_log()
+        active_root_id = self.normalize_id(active_log.get("root_folder_id") if active_log else "")
+
+        if active_log:
+            if normalized_folder_id and active_root_id and normalized_folder_id != active_root_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A dev deletion is already in progress for folder '{active_root_id}'. Resume that purge first.",
+                )
+            if not active_root_id:
+                raise HTTPException(status_code=409, detail="Dev deletion is marked active but has no root id")
+            return self.resume_dev_hard_delete(active_log)
+
+        if not normalized_folder_id:
+            raise HTTPException(status_code=400, detail="Folder id is required")
+
+        root_metadata = self.get_folder(normalized_folder_id, require_active=False)
+        root_parent_id = self.from_storage_parent_folder_id(root_metadata.get("parent_folder_id"))
+        log_metadata = self.create_dev_deletion_log(
+            root_id=normalized_folder_id,
+            root_parent_id=root_parent_id,
+        )
+        return self.run_dev_hard_delete(root_metadata, resumed=False, log_metadata=log_metadata)
+
+    def resume_dev_hard_delete(self, log_metadata=None):
+        log_metadata = log_metadata or self.get_active_dev_deletion_log()
+        if not log_metadata:
+            raise HTTPException(status_code=400, detail="No dev deletion is in progress")
+
+        root_id = self.normalize_id(log_metadata.get("root_folder_id"))
+        root_parent_id = self.normalize_id(log_metadata.get("root_parent_folder_id"))
+        phase = log_metadata.get("phase") or "idle"
+
+        if not root_id:
+            raise HTTPException(status_code=409, detail="Dev deletion root id is missing")
+
+        if phase == "awaiting_parent_cleanup":
+            return self.finalize_dev_hard_delete(root_id, root_parent_id, resumed=True, log_metadata=log_metadata)
+
+        root_metadata = self.get_folder_or_none(root_id)
+        if not root_metadata or root_metadata.get("user_id") != self.user_id:
+            self.update_dev_deletion_log(
+                log_metadata["log_id"],
+                status=self.DEV_LOG_STATUS_ONGOING,
+                phase="awaiting_parent_cleanup",
+            )
+            return self.finalize_dev_hard_delete(
+                root_id,
+                root_parent_id,
+                resumed=True,
+                log_metadata={**log_metadata, "phase": "awaiting_parent_cleanup"},
+            )
+
+        return self.run_dev_hard_delete(root_metadata, resumed=True, log_metadata=log_metadata)
+
+    def run_dev_hard_delete(self, root_metadata, resumed: bool, log_metadata):
+        root_id = root_metadata["folder_id"]
+        root_parent_id = self.from_storage_parent_folder_id(root_metadata.get("parent_folder_id"))
+        summary = {
+            "deleted_files": 0,
+            "deleted_folders": 0,
+        }
+
+        try:
+            self.update_dev_deletion_log(
+                log_metadata["log_id"],
+                status=self.DEV_LOG_STATUS_ONGOING,
+                phase="deleting",
+                last_error="",
+            )
+            self.dev_delete_folder_subtree(root_metadata, root_id, summary)
+            self.update_dev_deletion_log(
+                log_metadata["log_id"],
+                status=self.DEV_LOG_STATUS_ONGOING,
+                phase="awaiting_parent_cleanup",
+            )
+            return self.finalize_dev_hard_delete(
+                root_id,
+                root_parent_id,
+                resumed=resumed,
+                summary=summary,
+                log_metadata=log_metadata,
+            )
+        except Exception as exc:
+            self.update_dev_deletion_log(
+                log_metadata["log_id"],
+                status=self.DEV_LOG_STATUS_ONGOING,
+                phase="deleting",
+                last_error=str(exc),
+            )
+            raise
+
+    def finalize_dev_hard_delete(
+        self,
+        root_id: str,
+        root_parent_id: str | None,
+        resumed: bool,
+        summary: dict | None = None,
+        log_metadata=None,
+    ):
+        summary = summary or {
+            "deleted_files": 0,
+            "deleted_folders": 0,
+        }
+
+        if root_parent_id:
+            self.reconcile_folder_children_count_chain(root_parent_id)
+
+        self.update_dev_deletion_log(
+            log_metadata["log_id"],
+            status=self.DEV_LOG_STATUS_DONE,
+            phase="completed",
+            last_error="",
+            deleted_files_count=summary["deleted_files"],
+            deleted_folders_count=summary["deleted_folders"],
+            completed_at=self.now_iso(),
+        )
+
+        return {
+            "root_folder_id": root_id,
+            "resumed": resumed,
+            "deleted_files": summary["deleted_files"],
+            "deleted_folders": summary["deleted_folders"],
+            "phase": "completed",
+        }
+
+    def dev_delete_folder_subtree(self, folder_metadata, root_id: str, summary: dict):
+        normalized_parent_folder_id = self.from_storage_parent_folder_id(folder_metadata.get("parent_folder_id"))
+        next_folder_metadata = dict(folder_metadata)
+        next_folder_metadata["parent_folder_id"] = normalized_parent_folder_id
+        self.mark_folder_deletion_pending(folder_metadata["folder_id"], root_id)
+
+        child_folders, child_files = self.list_direct_children(folder_metadata["folder_id"])
+
+        for child_folder in child_folders:
+            self.dev_delete_folder_subtree(child_folder, root_id, summary)
+
+        for child_file in child_files:
+            self.dev_delete_file(child_file, root_id)
+            summary["deleted_files"] += 1
+
+        self.hard_delete_folder(next_folder_metadata)
+        summary["deleted_folders"] += 1
+
+    def dev_delete_file(self, metadata, root_id: str):
+        self.mark_file_deletion_pending(metadata["file_id"], root_id)
+        self.s3.delete_object(
+            Bucket=self.bucket,
+            Key=self.build_file_key(metadata),
+        )
+        self.file_table.delete_item(
+            Key={"file_id": metadata["file_id"]},
+            ConditionExpression="attribute_exists(file_id)",
+        )
+
+    def list_direct_children(self, folder_id: str):
+        child_folders = [
+            item
+            for item in self.query_items_by_parent(self.folder_table, folder_id)
+            if item.get("user_id") == self.user_id
+        ]
+        child_files = [
+            item
+            for item in self.query_items_by_parent(self.file_table, folder_id)
+            if item.get("user_id") == self.user_id
+        ]
+
+        child_folders.sort(key=lambda item: ((item.get("folder_name") or "").lower(), item.get("folder_id") or ""))
+        child_files.sort(key=lambda item: ((item.get("file_name") or "").lower(), item.get("file_id") or ""))
+        return child_folders, child_files
+
+    def mark_file_deletion_pending(self, file_id: str, root_id: str):
+        self.file_table.update_item(
+            Key={"file_id": file_id},
+            UpdateExpression="SET deletion_pending = :pending, deletion_root_id = :root_id",
+            ExpressionAttributeValues={
+                ":pending": True,
+                ":root_id": root_id,
+            },
+            ConditionExpression="attribute_exists(file_id)",
+        )
+
+    def mark_folder_deletion_pending(self, folder_id: str, root_id: str):
+        self.folder_table.update_item(
+            Key={"folder_id": folder_id},
+            UpdateExpression="SET deletion_pending = :pending, deletion_root_id = :root_id",
+            ExpressionAttributeValues={
+                ":pending": True,
+                ":root_id": root_id,
+            },
+            ConditionExpression="attribute_exists(folder_id)",
+        )
+
+    def reconcile_folder_children_count_chain(self, folder_id: str | None):
+        current_folder_id = folder_id
+
+        while current_folder_id:
+            folder = self.get_folder_or_none(current_folder_id)
+            if not folder or folder.get("user_id") != self.user_id:
+                return
+
+            child_folders, child_files = self.list_direct_children(current_folder_id)
+            next_count = len(child_folders) + len(child_files)
+            self.folder_table.update_item(
+                Key={"folder_id": current_folder_id},
+                UpdateExpression="SET children_count = :children_count",
+                ExpressionAttributeValues={
+                    ":children_count": next_count,
+                },
+                ConditionExpression="attribute_exists(folder_id)",
+            )
+
+            if folder.get("status") != "deleted" or next_count != 0:
+                return
+
+            parent_folder_id = self.from_storage_parent_folder_id(folder.get("parent_folder_id"))
+            folder["parent_folder_id"] = parent_folder_id
+            self.hard_delete_folder(folder)
+            current_folder_id = parent_folder_id
+
+    def get_active_dev_deletion_log(self):
+        candidates = self.scan_table(
+            self.dev_log_table,
+            Attr("user_id").eq(self.user_id)
+            & (
+                Attr("status").eq(self.DEV_LOG_STATUS_ACTIVE)
+                | Attr("status").eq(self.DEV_LOG_STATUS_ONGOING)
+            ),
+        )
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda item: ((item.get("updated_at") or ""), (item.get("created_at") or "")), reverse=True)
+        return candidates[0]
+
+    def create_dev_deletion_log(self, root_id: str, root_parent_id: str | None):
+        now = self.now_iso()
+        metadata = {
+            "log_id": self.generate_short_id(),
+            "user_id": self.user_id,
+            "root_folder_id": root_id,
+            "root_parent_folder_id": root_parent_id or "",
+            "status": self.DEV_LOG_STATUS_ACTIVE,
+            "phase": "active",
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": "",
+            "last_error": "",
+            "deleted_files_count": 0,
+            "deleted_folders_count": 0,
+        }
+        self.dev_log_table.put_item(Item=metadata)
+        return metadata
+
+    def update_dev_deletion_log(
+        self,
+        log_id: str,
+        *,
+        status: str | None = None,
+        phase: str | None = None,
+        last_error: str | None = None,
+        deleted_files_count: int | None = None,
+        deleted_folders_count: int | None = None,
+        completed_at: str | None = None,
+    ):
+        metadata = self.get_dev_log_or_none(log_id)
+        if not metadata or metadata.get("user_id") != self.user_id:
+            raise HTTPException(status_code=404, detail="Dev deletion log not found")
+
+        if status is not None:
+            metadata["status"] = status
+        if phase is not None:
+            metadata["phase"] = phase
+        if last_error is not None:
+            metadata["last_error"] = last_error
+        if deleted_files_count is not None:
+            metadata["deleted_files_count"] = int(deleted_files_count)
+        if deleted_folders_count is not None:
+            metadata["deleted_folders_count"] = int(deleted_folders_count)
+        if completed_at is not None:
+            metadata["completed_at"] = completed_at
+
+        metadata["updated_at"] = self.now_iso()
+        self.dev_log_table.put_item(Item=metadata)
+        return metadata
+
+    def get_dev_log_or_none(self, log_id: str):
+        if not log_id:
+            return None
+
+        response = self.dev_log_table.get_item(Key={"log_id": log_id})
+        return response.get("Item")
 
     def restore_objects(self, file_ids: list[str]):
         normalized_ids = self.normalize_file_ids(file_ids)
@@ -734,6 +1053,10 @@ class ObjectStorageService:
             raise HTTPException(status_code=400, detail="At least one file id is required")
 
         return normalized_ids
+
+    @staticmethod
+    def normalize_id(raw_value: str | None):
+        return str(raw_value or "").strip()
 
     @staticmethod
     def build_renamed_name(raw_name: str, file_extension: str):

@@ -173,6 +173,7 @@ export default function App() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [deleteObjectId, setDeleteObjectId] = useState('');
   const [deleteMode, setDeleteMode] = useState(false);
+  const [devPurgeMode, setDevPurgeMode] = useState(false);
   const [deleteConfirmKey, setDeleteConfirmKey] = useState('');
   const [deleting, setDeleting] = useState('');
   const [trashAction, setTrashAction] = useState('');
@@ -186,6 +187,15 @@ export default function App() {
   const [recentDeletes, setRecentDeletes] = useState([]);
   const [selectedTrashIds, setSelectedTrashIds] = useState({});
   const [selectedDeleteIds, setSelectedDeleteIds] = useState({});
+  const [devDeletionState, setDevDeletionState] = useState({
+    dev_deletion: false,
+    dev_deletion_root_id: '',
+    dev_deletion_root_parent_id: '',
+    dev_deletion_phase: 'idle',
+  });
+  const [devDeleteFolderId, setDevDeleteFolderId] = useState('');
+  const [devDeleting, setDevDeleting] = useState(false);
+  const [devDeleteFolderLabel, setDevDeleteFolderLabel] = useState('');
 
   const visibleItems = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
@@ -234,6 +244,7 @@ export default function App() {
     setCreatingFolder(false);
     setDeleteObjectId('');
     setDeleteMode(false);
+    setDevPurgeMode(false);
     setDeleteConfirmKey('');
     setDeleting('');
     setTrashAction('');
@@ -247,6 +258,15 @@ export default function App() {
     setRecentDeletes([]);
     setSelectedTrashIds({});
     setSelectedDeleteIds({});
+    setDevDeletionState({
+      dev_deletion: false,
+      dev_deletion_root_id: '',
+      dev_deletion_root_parent_id: '',
+      dev_deletion_phase: 'idle',
+    });
+    setDevDeleteFolderId('');
+    setDevDeleting(false);
+    setDevDeleteFolderLabel('');
   }
 
   function handleLogout() {
@@ -335,6 +355,25 @@ export default function App() {
     }
   }
 
+  async function loadDevDeletionState() {
+    try {
+      const data = await api('/dev/deletion-state', { authToken });
+      setDevDeletionState({
+        dev_deletion: !!data?.dev_deletion,
+        dev_deletion_root_id: data?.dev_deletion_root_id || '',
+        dev_deletion_root_parent_id: data?.dev_deletion_root_parent_id || '',
+        dev_deletion_phase: data?.dev_deletion_phase || 'idle',
+      });
+    } catch (err) {
+      if (err.message === 'Invalid or expired token') {
+        handleLogout();
+        setAuthError('Your session expired. Please log in again.');
+      } else {
+        setError(err.message || 'Could not load dev deletion state');
+      }
+    }
+  }
+
   useEffect(() => {
     async function restoreSession() {
       const storedToken = localStorage.getItem(AUTH_TOKEN_KEY) || '';
@@ -364,6 +403,7 @@ export default function App() {
   useEffect(() => {
     if (authUser && authToken) {
       loadFiles('');
+      loadDevDeletionState();
     }
   }, [authUser, authToken]);
 
@@ -565,6 +605,63 @@ export default function App() {
     }
   }
 
+  async function handleDevHardDelete({ resume = false } = {}) {
+    const folderId = resume ? '' : normalizeId(devDeleteFolderId);
+    if (!resume && !folderId) return;
+
+    try {
+      setError('');
+      setSuccess('');
+      setDevDeleting(true);
+      const data = await api('/dev/hard-delete', {
+        method: 'POST',
+        body: JSON.stringify({ folder_id: folderId }),
+        authToken,
+      });
+      const deletedFiles = Number(data?.deleted_files || 0);
+      const deletedFolders = Number(data?.deleted_folders || 0);
+      const rootFolderId = data?.root_folder_id || folderId || devDeletionState.dev_deletion_root_id;
+      setDevDeleteFolderId('');
+      setDevDeleteFolderLabel('');
+      setSuccess(
+        `${data?.resumed ? 'Resumed' : 'Started'} dev hard delete for ${rootFolderId}. Removed ${deletedFolders} folder${deletedFolders === 1 ? '' : 's'} and ${deletedFiles} file${deletedFiles === 1 ? '' : 's'}.`,
+      );
+      await loadFiles('', true, true, true);
+      await loadDevDeletionState();
+    } catch (err) {
+      setError(err.message || 'Dev hard delete failed');
+      await loadDevDeletionState();
+    } finally {
+      setDevDeleting(false);
+    }
+  }
+
+  function selectFolderForDevHardDelete(folder) {
+    const folderId = normalizeId(folder?.file_id || folder?.folder_id);
+    if (!folderId) return;
+
+    setDevDeleteFolderId(folderId);
+    setDevDeleteFolderLabel(folder?.path || folder?.name || folderId);
+    setSuccess(`Selected ${folder?.path || folder?.name || folderId} for dev hard delete.`);
+    setError('');
+  }
+
+  function toggleDevPurgeMode() {
+    if (viewMode === 'trash') {
+      return;
+    }
+
+    setDeleteConfirmKey('');
+    setDeleteMode(false);
+    setDevPurgeMode((current) => {
+      if (current) {
+        setDevDeleteFolderId('');
+        setDevDeleteFolderLabel('');
+      }
+      return !current;
+    });
+  }
+
   async function handleRename(file) {
     const draft = renameDrafts[file.file_id] || '';
     const finalName = buildRenamedObjectName(draft, file.file_extension || '');
@@ -751,6 +848,9 @@ export default function App() {
               }
               setDeleteConfirmKey('');
               setSelectedDeleteIds({});
+              setDevPurgeMode(false);
+              setDevDeleteFolderId('');
+              setDevDeleteFolderLabel('');
               setDeleteMode((current) => !current);
             }}
             disabled={viewMode === 'trash'}
@@ -759,9 +859,21 @@ export default function App() {
             {deleteMode ? 'Exit Delete' : 'Delete'}
           </button>
           <button
+            className={devPurgeMode ? 'dev-danger-button' : 'secondary-button'}
+            onClick={toggleDevPurgeMode}
+            disabled={viewMode === 'trash'}
+            type="button"
+          >
+            {devPurgeMode ? 'Exit Dev Purge' : 'Dev Purge'}
+          </button>
+          <button
             className={viewMode === 'trash' ? 'danger-button' : 'secondary-button'}
             onClick={() => {
               setDeleteConfirmKey('');
+              setDeleteMode(false);
+              setDevPurgeMode(false);
+              setDevDeleteFolderId('');
+              setDevDeleteFolderLabel('');
               if (viewMode === 'trash') {
                 loadFiles('', false, true, true);
               } else {
@@ -855,6 +967,17 @@ export default function App() {
                   <button className="danger-button" onClick={handleSoftDeleteSelected} disabled={selectedDeleteCount === 0 || !!trashAction} type="button">
                     {trashAction === 'soft-delete' ? 'Moving...' : `Move selected to trash (${selectedDeleteCount})`}
                   </button>
+                </div>
+              </div>
+            ) : null}
+            {viewMode === 'files' && devPurgeMode ? (
+              <div className="delete-history-box dev-purge-box">
+                <div className="delete-history-title">Dev purge selection</div>
+                <div className="delete-history-list">
+                  <div className="helper-text">
+                    Click one folder row to select it for subtree purge. Turning dev purge off will clear the selection.
+                  </div>
+                  {devDeleteFolderLabel ? <div className="delete-tag">{devDeleteFolderLabel}</div> : null}
                 </div>
               </div>
             ) : null}
@@ -954,7 +1077,29 @@ export default function App() {
                                 <button className="danger-button" onClick={() => setDeleteConfirmKey(item.file_id)} type="button">Delete</button>
                               )}
                             </div>
-                          ) : null}
+                          ) : devPurgeMode ? (
+                            <div className="row-actions">
+                              <button
+                                className={normalizeId(devDeleteFolderId) === normalizeId(item.file_id) ? 'dev-danger-button' : 'secondary-button'}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (normalizeId(devDeleteFolderId) === normalizeId(item.file_id)) {
+                                    setDevDeleteFolderId('');
+                                    setDevDeleteFolderLabel('');
+                                    setSuccess(`Cleared dev purge selection for ${item.path || item.name || item.file_id}.`);
+                                    setError('');
+                                  } else {
+                                    selectFolderForDevHardDelete(item);
+                                  }
+                                }}
+                                type="button"
+                              >
+                                {normalizeId(devDeleteFolderId) === normalizeId(item.file_id) ? 'Selected' : 'Select'}
+                              </button>
+                            </div>
+                          ) : (
+                            null
+                          )}
                         </div>
                       </li>
                     );
@@ -1125,6 +1270,61 @@ export default function App() {
                   </label>
                   <button className="danger-button" onClick={() => handleDelete(deleteObjectId)} disabled={!normalizeId(deleteObjectId) || deleting} type="button">
                     {deleting && normalizeId(deleteObjectId) === deleting ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
+              </section>
+
+              <section className="panel side-panel dev-tool-panel">
+                <div className="section-head">
+                  <h2>Dev hard delete</h2>
+                </div>
+                <div className="stack-form">
+                  <div className="dev-tool-chip-row">
+                    <span className="dev-tool-chip dev-tool-chip-blue">DFS</span>
+                    <span className="dev-tool-chip dev-tool-chip-red">DB + S3 purge</span>
+                  </div>
+                  <label className="field">
+                    <span>Folder id</span>
+                    <input
+                      type="text"
+                      value={devDeleteFolderId}
+                      onChange={(event) => setDevDeleteFolderId(event.target.value)}
+                      placeholder="folder id"
+                    />
+                  </label>
+                  <div className="helper-text">
+                    Deletes the selected folder subtree permanently from DynamoDB and S3. Files and empty folders are marked
+                    `deletion_pending` before removal.
+                  </div>
+                  {devDeleteFolderLabel ? (
+                    <div className="dev-tool-status">
+                      <div>Selected folder: {devDeleteFolderLabel}</div>
+                      <div>Selected id: {devDeleteFolderId}</div>
+                    </div>
+                  ) : null}
+                  {devDeletionState.dev_deletion ? (
+                    <div className="dev-tool-status">
+                      <div>In progress: {devDeletionState.dev_deletion_root_id || 'unknown root'}</div>
+                      <div>Phase: {devDeletionState.dev_deletion_phase || 'deleting'}</div>
+                    </div>
+                  ) : (
+                    <div className="dev-tool-status dev-tool-status-idle">No dev deletion is active.</div>
+                  )}
+                  <button
+                    className="dev-danger-button"
+                    onClick={() => handleDevHardDelete()}
+                    disabled={!normalizeId(devDeleteFolderId) || devDeleting}
+                    type="button"
+                  >
+                    {devDeleting ? 'Deleting subtree...' : 'Start subtree hard delete'}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => handleDevHardDelete({ resume: true })}
+                    disabled={!devDeletionState.dev_deletion || devDeleting}
+                    type="button"
+                  >
+                    {devDeleting ? 'Resuming...' : 'Resume pending delete'}
                   </button>
                 </div>
               </section>

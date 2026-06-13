@@ -25,6 +25,10 @@ class ObjectSelectionRequest(BaseModel):
     file_ids: list[str]
 
 
+class DevHardDeleteRequest(BaseModel):
+    folder_id: str = ""
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -42,6 +46,7 @@ def get_storage_service(current_user: UserProfile = Depends(get_authenticated_us
         user_id=current_user.username,
         file_metadata_table=settings.file_metadata_table,
         folder_metadata_table=settings.folder_metadata_table,
+        dev_log_table=settings.dev_log_table,
     )
 
 
@@ -142,6 +147,21 @@ def delete_trash(
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
     return storage_service.permanently_delete_objects(request.file_ids)
+
+
+@app.get("/api/dev/deletion-state")
+def get_dev_deletion_state(
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.get_dev_deletion_state()
+
+
+@app.post("/api/dev/hard-delete")
+def dev_hard_delete(
+    request: DevHardDeleteRequest,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.dev_hard_delete_folder(request.folder_id)
 
 
 @app.delete("/api/delete")
