@@ -404,6 +404,7 @@ export default function App() {
   async function handleUpload(event) {
     event.preventDefault();
     if (!selectedFile) return;
+    const form = event.currentTarget;
 
     try {
       setError('');
@@ -420,7 +421,7 @@ export default function App() {
       });
 
       setSelectedFile(null);
-      event.currentTarget.reset();
+      form.reset();
       await loadFiles(currentFolderId, true);
     } catch (err) {
       setError(err.message || 'Upload failed');
