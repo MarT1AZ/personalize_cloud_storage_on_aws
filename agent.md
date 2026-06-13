@@ -121,7 +121,6 @@ Backend Docker dev run:
 - CORS is enabled in the backend specifically for local frontend development
 
 ## Notes For Future Work
-- Handle name collisions during restore for both files and folders
 
 
 ## Feature Tracking

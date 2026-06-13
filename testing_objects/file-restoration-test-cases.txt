@@ -1,0 +1,105 @@
+1. Same parent, no conflict
+root/f1/file.txt [deleted]
+restore
+-> file.txt
+
+2. Same parent, active file conflict
+root/f1/file.txt [deleted]
+root/f1/file.txt [active]
+restore
+-> file_restored.txt
+
+3. Same parent, chained restored conflict
+root/f1/file.txt [deleted]
+root/f1/file.txt [active]
+root/f1/file_restored.txt [active]
+root/f1/file_restored_1.txt [active]
+restore
+-> file_restored_2.txt
+
+4. Different extension should not conflict
+root/f1/file.txt [deleted]
+root/f1/file.png [active]
+restore
+-> file.txt
+
+5. Root-level restore conflict
+root/file.txt [deleted]
+root/file.txt [active]
+restore
+-> file_restored.txt
+
+6. Parent folder deleted, no folder-name conflict
+root/f1/file.txt [deleted]
+root/f1 [deleted]
+restore file
+-> f1 restored as active
+-> file.txt restored
+
+7. Parent folder deleted, folder-name conflict
+root/f1/file.txt [deleted]
+root/f1 [deleted]
+root/f1 [active]
+restore file
+-> deleted folder restored as f1_restored
+-> file restored into f1_restored
+
+8. Parent folder deleted, chained folder-name conflict
+root/f1/file.txt [deleted]
+root/f1 [deleted]
+root/f1 [active]
+root/f1_restored [active]
+root/f1_restored_1 [active]
+restore file
+-> deleted folder restored as f1_restored_2
+-> file restored there
+
+9. Deep chain restore
+root/f1/f2/f3/file.txt [deleted]
+f1/f2/f3 all deleted
+restore file
+-> f1 active
+-> f2 active
+-> f3 active
+-> file restored
+
+10. Deep chain with mixed conflicts
+root/f1/f2/file.txt [deleted]
+f1 deleted
+f2 deleted
+root/f1 [active]
+root/f1_restored/f2 [active]
+restore file
+-> f1 becomes f1_restored
+-> f2 becomes f2_restored
+-> file restored there
+
+11. Manual orphan parent missing from DB
+file.txt [deleted]
+parent_folder_id -> missing folder row
+restore
+-> should fail in a controlled way, not half-restore
+
+12. File row exists but S3 object missing
+file.txt [deleted]
+restore
+download after restore
+-> restore may succeed, but download should be tested
+
+13. Multi-select restore with mixed validity
+a.txt [deleted]
+b.txt [active]
+restore both ids
+-> should fail predictably or restore only valid ones, depending on intended rule
+
+14. Duplicate names only within same parent
+root/f1/file.txt [deleted]
+root/f2/file.txt [active]
+restore into f1
+-> file.txt
+
+15. File name already contains restored
+file_restored.txt [deleted]
+file_restored.txt [active]
+restore
+-> file_restored_restored.txt

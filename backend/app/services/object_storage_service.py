@@ -9,8 +9,8 @@ from fastapi import HTTPException
 
 
 class ObjectStorageService:
-    FILE_NAME_INDEX = "file_name_index"
-    FOLDER_NAME_INDEX = "folder_name_index"
+    PARENT_FOLDER_INDEX = "parent_folder_id_index"
+    ROOT_PARENT_FOLDER_ID = "__root__"
 
     def __init__(
         self,
@@ -32,12 +32,13 @@ class ObjectStorageService:
         current_folder = self.get_parent_folder(folder_id)
         breadcrumbs = self.build_breadcrumbs(current_folder)
         base_display_path = self.build_display_prefix(breadcrumbs)
+        parent_filter = self.build_parent_folder_filter(folder_id or None)
 
         folders = []
         for folder_metadata in self.scan_table(
             self.folder_table,
             Attr("user_id").eq(self.user_id)
-            & Attr("parent_folder_id").eq(folder_id or None)
+            & parent_filter
             & Attr("status").eq("active"),
         ):
             folders.append(self.serialize_folder(folder_metadata, base_display_path))
@@ -46,7 +47,7 @@ class ObjectStorageService:
         for file_metadata in self.scan_table(
             self.file_table,
             Attr("user_id").eq(self.user_id)
-            & Attr("parent_folder_id").eq(folder_id or None)
+            & parent_filter
             & Attr("status").eq("active"),
         ):
             size = self.get_s3_object_size(file_metadata)
@@ -92,7 +93,7 @@ class ObjectStorageService:
         metadata = {
             "file_id": file_id,
             "user_id": self.user_id,
-            "parent_folder_id": parent_folder["folder_id"] if parent_folder else None,
+            "parent_folder_id": self.to_storage_parent_folder_id(parent_folder["folder_id"] if parent_folder else None),
             "file_name": file_name,
             "file_extension": self.get_file_extension(file_name),
             "status": "active",
@@ -107,7 +108,7 @@ class ObjectStorageService:
             ExtraArgs={"ContentType": upload_file.content_type},
         )
         self.file_table.put_item(Item=metadata)
-        self.increment_children_count(metadata.get("parent_folder_id"))
+        self.increment_children_count(parent_folder["folder_id"] if parent_folder else None)
 
         return {
             "uploaded": file_id,
@@ -127,7 +128,7 @@ class ObjectStorageService:
         metadata = {
             "folder_id": folder_id,
             "user_id": self.user_id,
-            "parent_folder_id": parent_folder["folder_id"] if parent_folder else None,
+            "parent_folder_id": self.to_storage_parent_folder_id(parent_folder["folder_id"] if parent_folder else None),
             "folder_name": normalized_name,
             "status": "active",
             "created_at": now,
@@ -141,7 +142,7 @@ class ObjectStorageService:
             Body=b"",
         )
         self.folder_table.put_item(Item=metadata)
-        self.increment_children_count(metadata.get("parent_folder_id"))
+        self.increment_children_count(parent_folder["folder_id"] if parent_folder else None)
 
         return {
             "created_folder_id": folder_id,
@@ -207,15 +208,22 @@ class ObjectStorageService:
             if metadata.get("status") != "deleted":
                 raise HTTPException(status_code=400, detail="Only deleted files can be restored")
 
-            target_parent_id = metadata.get("parent_folder_id")
+            target_parent_id = self.from_storage_parent_folder_id(metadata.get("parent_folder_id"))
             if target_parent_id:
                 self.ensure_folder_chain_active(target_parent_id)
+            restored_file_name = self.build_restored_file_name(
+                target_parent_id,
+                metadata.get("file_name", ""),
+                ignore_file_id=file_id,
+            )
 
             self.file_table.update_item(
                 Key={"file_id": file_id},
-                UpdateExpression="SET #status = :status, deleted_at = :deleted_at",
+                UpdateExpression="SET file_name = :file_name, file_extension = :file_extension, #status = :status, deleted_at = :deleted_at",
                 ExpressionAttributeNames={"#status": "status"},
                 ExpressionAttributeValues={
+                    ":file_name": restored_file_name,
+                    ":file_extension": self.get_file_extension(restored_file_name),
                     ":status": "active",
                     ":deleted_at": None,
                 },
@@ -224,7 +232,7 @@ class ObjectStorageService:
 
             restored_items.append({
                 "file_id": file_id,
-                "object_name": metadata.get("file_name"),
+                "object_name": restored_file_name,
                 "parent_id": target_parent_id or "",
             })
 
@@ -266,7 +274,9 @@ class ObjectStorageService:
                 Key={"file_id": file_id},
                 ConditionExpression="attribute_exists(file_id)",
             )
-            self.handle_parent_after_child_hard_delete(metadata.get("parent_folder_id"))
+            self.handle_parent_after_child_hard_delete(
+                self.from_storage_parent_folder_id(metadata.get("parent_folder_id"))
+            )
             deleted_items.append({
                 "file_id": file_id,
                 "object_name": metadata.get("file_name"),
@@ -305,6 +315,11 @@ class ObjectStorageService:
             raise HTTPException(status_code=400, detail="Folder still has active children")
 
         deleted_at = self.now_iso()
+        normalized_parent_folder_id = self.from_storage_parent_folder_id(metadata.get("parent_folder_id"))
+        next_metadata = dict(metadata)
+        next_metadata["status"] = "deleted"
+        next_metadata["deleted_at"] = deleted_at
+        next_metadata["parent_folder_id"] = normalized_parent_folder_id
         self.folder_table.update_item(
             Key={"folder_id": metadata["folder_id"]},
             UpdateExpression="SET #status = :status, deleted_at = :deleted_at",
@@ -315,6 +330,15 @@ class ObjectStorageService:
             },
             ConditionExpression="attribute_exists(folder_id)",
         )
+
+        if int(metadata.get("children_count", 0)) == 0:
+            self.hard_delete_folder(next_metadata)
+            self.handle_parent_after_child_hard_delete(normalized_parent_folder_id)
+            return {
+                "file_id": metadata["folder_id"],
+                "deleted_at": deleted_at,
+                "hard_deleted": True,
+            }
 
         return {
             "file_id": metadata["folder_id"],
@@ -358,10 +382,10 @@ class ObjectStorageService:
                 "label": cursor["folder_name"],
                 "folder_id": cursor["folder_id"],
             })
-            parent_id = cursor.get("parent_folder_id")
+            parent_id = self.from_storage_parent_folder_id(cursor.get("parent_folder_id"))
             if not parent_id:
                 break
-            cursor = self.get_folder(parent_id, require_active=False)
+            cursor = self.get_folder_or_none(parent_id)
 
         breadcrumbs.extend(reversed(chain))
         return breadcrumbs
@@ -396,24 +420,25 @@ class ObjectStorageService:
         }
 
     def serialize_trashed_file(self, metadata):
+        parent_folder_id = self.from_storage_parent_folder_id(metadata.get("parent_folder_id"))
         return {
             "kind": "file",
             "file_id": metadata["file_id"],
             "name": metadata["file_name"],
-            "parent_id": metadata.get("parent_folder_id") or "",
-            "parent_path": self.build_parent_display_path(metadata.get("parent_folder_id")),
+            "parent_id": parent_folder_id or "",
+            "parent_path": self.build_parent_display_path(parent_folder_id),
             "deleted_at": metadata.get("deleted_at"),
             "upload_date": metadata.get("created_at"),
             "file_extension": metadata.get("file_extension", ""),
         }
 
     def build_file_key(self, metadata):
-        segments = self.build_folder_segments(metadata.get("parent_folder_id"))
+        segments = self.build_folder_segments(self.from_storage_parent_folder_id(metadata.get("parent_folder_id")))
         segments.append(metadata["file_id"])
         return "/".join(segments)
 
     def build_folder_key(self, metadata):
-        segments = self.build_folder_segments(metadata.get("parent_folder_id"))
+        segments = self.build_folder_segments(self.from_storage_parent_folder_id(metadata.get("parent_folder_id")))
         segments.append(metadata["folder_id"])
         return f"{'/'.join(segments)}/"
 
@@ -421,15 +446,17 @@ class ObjectStorageService:
         if not folder_id:
             return []
 
-        folder = self.get_folder(folder_id, require_active=False)
+        folder = self.get_folder_or_none(folder_id)
+        if not folder:
+            return []
         segments = []
         cursor = folder
         while cursor:
             segments.append(cursor["folder_id"])
-            parent_id = cursor.get("parent_folder_id")
+            parent_id = self.from_storage_parent_folder_id(cursor.get("parent_folder_id"))
             if not parent_id:
                 break
-            cursor = self.get_folder(parent_id, require_active=False)
+            cursor = self.get_folder_or_none(parent_id)
 
         return list(reversed(segments))
 
@@ -496,6 +523,7 @@ class ObjectStorageService:
 
         while current_folder_id:
             folder = self.get_folder(current_folder_id, require_active=False)
+            normalized_parent_folder_id = self.from_storage_parent_folder_id(folder.get("parent_folder_id"))
             next_count = max(int(folder.get("children_count", 0)) - 1, 0)
             self.folder_table.update_item(
                 Key={"folder_id": current_folder_id},
@@ -509,9 +537,9 @@ class ObjectStorageService:
             if folder.get("status") != "deleted" or next_count != 0:
                 return
 
-            parent_folder_id = folder.get("parent_folder_id")
+            folder["parent_folder_id"] = normalized_parent_folder_id
             self.hard_delete_folder(folder)
-            current_folder_id = parent_folder_id
+            current_folder_id = normalized_parent_folder_id
 
     def hard_delete_folder(self, metadata):
         self.s3.delete_object(
@@ -528,19 +556,25 @@ class ObjectStorageService:
         cursor = self.get_folder(folder_id, require_active=False)
         while cursor:
             chain.append(cursor)
-            parent_id = cursor.get("parent_folder_id")
+            parent_id = self.from_storage_parent_folder_id(cursor.get("parent_folder_id"))
             if not parent_id:
                 break
             cursor = self.get_folder(parent_id, require_active=False)
 
         for folder in reversed(chain):
+            restored_folder_name = self.build_restored_folder_name(
+                self.from_storage_parent_folder_id(folder.get("parent_folder_id")),
+                folder.get("folder_name", ""),
+                ignore_folder_id=folder["folder_id"],
+            )
             if folder.get("status") == "active":
                 continue
             self.folder_table.update_item(
                 Key={"folder_id": folder["folder_id"]},
-                UpdateExpression="SET #status = :status, deleted_at = :deleted_at",
+                UpdateExpression="SET folder_name = :folder_name, #status = :status, deleted_at = :deleted_at",
                 ExpressionAttributeNames={"#status": "status"},
                 ExpressionAttributeValues={
+                    ":folder_name": restored_folder_name,
                     ":status": "active",
                     ":deleted_at": None,
                 },
@@ -585,39 +619,73 @@ class ObjectStorageService:
 
         return candidate
 
-    def has_active_file_with_name(self, parent_folder_id: str | None, file_name: str):
-        items = self.query_items_by_name(
+    def build_restored_file_name(self, parent_folder_id: str | None, requested_name: str, ignore_file_id: str | None = None):
+        if not self.has_active_file_with_name(parent_folder_id, requested_name, ignore_file_id=ignore_file_id):
+            return requested_name
+
+        stem = PurePosixPath(requested_name).stem or requested_name
+        suffix = self.get_file_extension(requested_name)
+        candidate = f"{stem}_restored{suffix}"
+        copy_number = 1
+
+        while self.has_active_file_with_name(parent_folder_id, candidate, ignore_file_id=ignore_file_id):
+            candidate = f"{stem}_restored_{copy_number}{suffix}"
+            copy_number += 1
+
+        return candidate
+
+    def build_restored_folder_name(self, parent_folder_id: str | None, requested_name: str, ignore_folder_id: str | None = None):
+        if not self.has_active_folder_with_name(parent_folder_id, requested_name, ignore_folder_id=ignore_folder_id):
+            return requested_name
+
+        candidate = f"{requested_name}_restored"
+        copy_number = 1
+
+        while self.has_active_folder_with_name(parent_folder_id, candidate, ignore_folder_id=ignore_folder_id):
+            candidate = f"{requested_name}_restored_{copy_number}"
+            copy_number += 1
+
+        return candidate
+
+    def has_active_file_with_name(self, parent_folder_id: str | None, file_name: str, ignore_file_id: str | None = None):
+        items = self.query_items_by_parent(
             table=self.file_table,
-            index_name=self.FILE_NAME_INDEX,
-            name_key="file_name",
-            name_value=file_name,
+            parent_folder_id=parent_folder_id,
         )
         return any(
-            item.get("user_id") == self.user_id
-            and self.same_parent_folder(item.get("parent_folder_id"), parent_folder_id)
+            item.get("file_id") != ignore_file_id
+            and item.get("user_id") == self.user_id
+            and self.same_parent_folder(self.from_storage_parent_folder_id(item.get("parent_folder_id")), parent_folder_id)
+            and item.get("file_name") == file_name
             and item.get("status") == "active"
             for item in items
         )
 
-    def has_active_folder_with_name(self, parent_folder_id: str | None, folder_name: str):
-        items = self.query_items_by_name(
+    def has_active_folder_with_name(self, parent_folder_id: str | None, folder_name: str, ignore_folder_id: str | None = None):
+        items = self.query_items_by_parent(
             table=self.folder_table,
-            index_name=self.FOLDER_NAME_INDEX,
-            name_key="folder_name",
-            name_value=folder_name,
+            parent_folder_id=parent_folder_id,
         )
         return any(
-            item.get("user_id") == self.user_id
-            and self.same_parent_folder(item.get("parent_folder_id"), parent_folder_id)
+            item.get("folder_id") != ignore_folder_id
+            and item.get("user_id") == self.user_id
+            and self.same_parent_folder(self.from_storage_parent_folder_id(item.get("parent_folder_id")), parent_folder_id)
+            and item.get("folder_name") == folder_name
             and item.get("status") == "active"
             for item in items
         )
 
-    def query_items_by_name(self, table, index_name: str, name_key: str, name_value: str):
+    def query_items_by_parent(self, table, parent_folder_id: str | None):
+        if parent_folder_id is None:
+            return self.scan_table(
+                table,
+                self.build_parent_folder_filter(None),
+            )
+
         try:
             response = table.query(
-                IndexName=index_name,
-                KeyConditionExpression=Key(name_key).eq(name_value),
+                IndexName=self.PARENT_FOLDER_INDEX,
+                KeyConditionExpression=Key("parent_folder_id").eq(self.to_storage_parent_folder_id(parent_folder_id)),
             )
             return response.get("Items", [])
         except ClientError as exc:
@@ -627,8 +695,28 @@ class ObjectStorageService:
 
         return self.scan_table(
             table,
-            Attr(name_key).eq(name_value),
+            self.build_parent_folder_filter(parent_folder_id),
         )
+
+    @classmethod
+    def to_storage_parent_folder_id(cls, parent_folder_id: str | None):
+        return parent_folder_id or cls.ROOT_PARENT_FOLDER_ID
+
+    @classmethod
+    def from_storage_parent_folder_id(cls, parent_folder_id: str | None):
+        if parent_folder_id in {"", None, cls.ROOT_PARENT_FOLDER_ID}:
+            return None
+        return parent_folder_id
+
+    @classmethod
+    def build_parent_folder_filter(cls, parent_folder_id: str | None):
+        if parent_folder_id is None:
+            return (
+                Attr("parent_folder_id").not_exists()
+                | Attr("parent_folder_id").eq(None)
+                | Attr("parent_folder_id").eq(cls.ROOT_PARENT_FOLDER_ID)
+            )
+        return Attr("parent_folder_id").eq(cls.to_storage_parent_folder_id(parent_folder_id))
 
     @staticmethod
     def same_parent_folder(left_parent_folder_id: str | None, right_parent_folder_id: str | None):
