@@ -10,7 +10,7 @@ The frontend is run locally with Node/Vite. The backend is run with Docker.
 ## Current Structure
 - Backend app: `backend/app/storage_backend.py`
 - Backend config module: `backend/app/config.py`
-- Backend S3 service: `backend/app/services/s3_storage_service.py`
+- Backend storage service: `backend/app/services/object_storage_service.py`
 - Backend production image: `backend/dockerfile`
 - Backend dev image: `backend/Dockerfile.dev`
 - Backend dependencies: `backend/requirements.txt`
@@ -46,13 +46,17 @@ The frontend is not part of Docker. It talks to the backend directly over HTTP.
 - `GET /api/auth/me` returns the current authenticated user from the bearer token
 - `GET /api/whoami` returns the current AWS caller identity
 - `GET /api/check_bucket` returns the current authenticated user's bucket info
-- `GET /api/files?prefix=...` returns the current folder prefix plus immediate child folders and files
-- `POST /api/folders` creates a folder inside the provided prefix
-- `POST /api/upload` uploads one multipart file, optionally into the provided folder prefix
-- `GET /api/files/{key:path}/download` returns a short-lived presigned download URL
-- `POST /api/files/{key:path}/rename` renames a file by copying to the corrected final name and deleting the original
-- `DELETE /api/files/{key}` deletes a file, or deletes a folder only when it is empty
-- `DELETE /api/delete?key=...` is an alias for delete by query string
+- `GET /api/files?folder_id=...` returns the current folder id plus immediate child folders and files
+- `GET /api/trash` returns trashed files for the current user
+- `POST /api/folders` creates a folder inside the provided parent folder
+- `POST /api/upload` uploads one multipart file, optionally into the provided folder
+- `GET /api/files/{file_id}/download` returns a short-lived presigned download URL
+- `POST /api/files/{file_id}/rename` updates a file name while preserving its extension
+- `DELETE /api/files/{file_id}` soft-deletes a file, or soft-deletes an empty folder
+- `POST /api/trash/soft-delete` soft-deletes multiple selected files
+- `POST /api/trash/restore` restores selected trashed files
+- `POST /api/trash/delete` permanently deletes selected trashed files
+- `DELETE /api/delete?file_id=...` is an alias for delete by query string
 
 ## How To Run
 Frontend:

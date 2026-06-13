@@ -6,22 +6,36 @@ The backend source now lives under `backend/app/` so the dev container can bind-
 Backend settings now come from a root `.env` file, with `.env.template` provided as the starting point.
 
 ## Current Features
+Authentication
 - Log in with username and password
-- Stay signed in after page reload with a saved token
+- Stay signed in after page reload with a saved JWT token
+
+Browsing
 - Browse folders and files
+- Open nested folders
+- Go up to the parent folder from a nested path
+- Show an absolute path for each item
 - Search items in the current folder by keyword
 - Sort items by alphabet or last modified time
 - Switch between folder-first and file-first ordering
+
+Folders
 - Create folders
-- Open nested folders
-- Show an absolute path for each item
+- Prevent creating a folder when an active folder with the same name already exists
+- Soft-delete empty folders
+
+Files
+- Upload file
+- Upload duplicate active file names as copy variants automatically
 - Show file name, size, and upload date for each item
+- Download a file from the list
 - Rename a file
 - Keep the original file extension during rename
-- Upload duplicate active file names as copy variants automatically
-- Prevent creating a folder when an active folder with the same name already exists
-- Enable trash mode to delete files and folders from the list
-- Delete by path
-- Delete on item card
-- Show a recent deletion alert
-- Upload file
+
+Trash
+- Move one file to trash from the list
+- Move multiple files to trash from the current folder
+- View trashed files
+- Restore trashed files
+- Permanently delete trashed files
+- Show recent deletion history in the UI
