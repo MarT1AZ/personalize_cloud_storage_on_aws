@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api';
 const AUTH_TOKEN_KEY = 'pcs_auth_token';
+const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 
 function normalizeKey(value) {
   return String(value || '').trim().replace(/^\/+/, '');
@@ -483,6 +484,11 @@ export default function App() {
     if (!selectedFile) return;
     const form = event.currentTarget;
 
+    if (selectedFile.size > MAX_UPLOAD_BYTES) {
+      setError('File is larger than 1GB.');
+      return;
+    }
+
     try {
       setError('');
       setSuccess('');
@@ -520,6 +526,24 @@ export default function App() {
     } finally {
       setUploading(false);
     }
+  }
+
+  function handleSelectedFileChange(event) {
+    const file = event.target.files?.[0] || null;
+    if (!file) {
+      setSelectedFile(null);
+      return;
+    }
+
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setSelectedFile(null);
+      setError('File is larger than 1GB.');
+      event.target.value = '';
+      return;
+    }
+
+    setError('');
+    setSelectedFile(file);
   }
 
   async function handleDelete(rawObjectId) {
@@ -1302,9 +1326,10 @@ export default function App() {
                 <form className="stack-form" onSubmit={handleUpload}>
                   <label className="field">
                     <span>Select file</span>
-                    <input type="file" onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} />
+                    <input type="file" onChange={handleSelectedFileChange} />
                   </label>
                   <div className="helper-text">Current folder: {currentPath || '/'}</div>
+                  <div className="helper-text">Maximum file size: 1GB</div>
                   <button className="primary-button" type="submit" disabled={!selectedFile || uploading}>
                     {uploading ? 'Uploading...' : 'Upload'}
                   </button>
