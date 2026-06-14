@@ -4,8 +4,12 @@ import secrets
 
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
+from botocore.client import Config
 from botocore.exceptions import ClientError
 from fastapi import HTTPException
+import jwt
+
+from app.auth_config import auth_settings
 
 
 class ObjectStorageService:
@@ -14,6 +18,8 @@ class ObjectStorageService:
     DEV_LOG_STATUS_ACTIVE = "active"
     DEV_LOG_STATUS_ONGOING = "ongoing"
     DEV_LOG_STATUS_DONE = "done"
+    MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
+    DIRECT_UPLOAD_EXPIRES_SECONDS = 900
 
     def __init__(
         self,
@@ -32,6 +38,8 @@ class ObjectStorageService:
         self.file_table = self.dynamodb.Table(file_metadata_table)
         self.folder_table = self.dynamodb.Table(folder_metadata_table)
         self.dev_log_table = self.dynamodb.Table(dev_log_table)
+        self._bucket_region = None
+        self._upload_signing_client = None
 
     def list_files(self, folder_id: str = ""):
         current_folder = self.get_parent_folder(folder_id)
@@ -83,37 +91,113 @@ class ObjectStorageService:
             "files": trashed_items,
         }
 
-    def upload_file(self, upload_file, folder_id: str = ""):
-        parent_folder = self.get_parent_folder(folder_id)
-        file_id = self.generate_short_id()
-        now = self.now_iso()
-        file_name = (upload_file.filename or "").strip()
-        if not file_name:
+    def start_direct_upload(self, file_name: str, file_size: int, file_type: str = "", folder_id: str = ""):
+        normalized_file_name = str(file_name or "").strip()
+        if not normalized_file_name:
             raise HTTPException(status_code=400, detail="File name is required")
-        file_name = self.build_upload_file_name(
-            parent_folder["folder_id"] if parent_folder else None,
-            file_name,
-        )
+
+        normalized_file_size = int(file_size or 0)
+        if normalized_file_size <= 0:
+            raise HTTPException(status_code=400, detail="File size must be greater than 0")
+
+        parent_folder = self.get_parent_folder(folder_id)
+        parent_folder_id = parent_folder["folder_id"] if parent_folder else None
+        final_file_name = self.build_upload_file_name(parent_folder_id, normalized_file_name)
+        file_id = self.generate_short_id()
+        now = datetime.now(timezone.utc)
 
         metadata = {
             "file_id": file_id,
             "user_id": self.user_id,
-            "parent_folder_id": self.to_storage_parent_folder_id(parent_folder["folder_id"] if parent_folder else None),
-            "file_name": file_name,
-            "file_extension": self.get_file_extension(file_name),
+            "parent_folder_id": self.to_storage_parent_folder_id(parent_folder_id),
+            "file_name": final_file_name,
+            "file_extension": self.get_file_extension(final_file_name),
             "status": "active",
-            "created_at": now,
+            "created_at": self.iso_from_datetime(now),
+            "deleted_at": None,
+        }
+        object_key = self.build_file_key(metadata)
+        upload_token = self.encode_upload_token(
+            file_id=file_id,
+            parent_folder_id=parent_folder_id,
+            file_name=final_file_name,
+            file_extension=metadata["file_extension"],
+            content_type=str(file_type or "").strip(),
+            object_key=object_key,
+            issued_at=now,
+        )
+
+        presigned_post_kwargs = {
+            "Bucket": self.bucket,
+            "Key": object_key,
+            "Conditions": self.build_upload_post_conditions(file_type),
+            "ExpiresIn": self.DIRECT_UPLOAD_EXPIRES_SECONDS,
+        }
+        normalized_file_type = str(file_type or "").strip()
+        if normalized_file_type:
+            presigned_post_kwargs["Fields"] = {
+                "Content-Type": normalized_file_type,
+            }
+
+        presigned_post = self.get_upload_signing_client().generate_presigned_post(**presigned_post_kwargs)
+
+        return {
+            "file_id": file_id,
+            "object_name": final_file_name,
+            "upload_token": upload_token,
+            "upload_url": presigned_post["url"],
+            "upload_fields": presigned_post["fields"],
+            "max_upload_bytes": self.MAX_UPLOAD_BYTES,
+        }
+
+    def complete_direct_upload(self, upload_token: str):
+        payload = self.decode_upload_token(upload_token)
+        file_id = self.normalize_id(payload.get("file_id"))
+        parent_folder_id = self.normalize_id(payload.get("parent_folder_id")) or None
+        file_name = str(payload.get("file_name") or "").strip()
+        file_extension = str(payload.get("file_extension") or "").strip()
+        content_type = str(payload.get("content_type") or "").strip()
+        object_key = str(payload.get("object_key") or "").strip()
+
+        if not file_id or not file_name or not object_key:
+            raise HTTPException(status_code=400, detail="Upload token is missing required file metadata")
+
+        try:
+            head_response = self.s3.head_object(
+                Bucket=self.bucket,
+                Key=object_key,
+            )
+        except ClientError as exc:
+            raise HTTPException(status_code=400, detail="Uploaded file not found in S3") from exc
+
+        content_length = int(head_response.get("ContentLength") or 0)
+        if content_length <= 0:
+            raise HTTPException(status_code=400, detail="Uploaded file is empty")
+        if content_length > self.MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=400, detail="Uploaded file exceeds the 1GB limit")
+
+        metadata = {
+            "file_id": file_id,
+            "user_id": self.user_id,
+            "parent_folder_id": self.to_storage_parent_folder_id(parent_folder_id),
+            "file_name": file_name,
+            "file_extension": file_extension or self.get_file_extension(file_name),
+            "status": "active",
+            "created_at": self.now_iso(),
             "deleted_at": None,
         }
 
-        self.s3.upload_fileobj(
-            upload_file.file,
-            self.bucket,
-            self.build_file_key(metadata),
-            ExtraArgs={"ContentType": upload_file.content_type},
-        )
-        self.file_table.put_item(Item=metadata)
-        self.increment_children_count(parent_folder["folder_id"] if parent_folder else None)
+        if content_type and head_response.get("ContentType") and head_response.get("ContentType") != content_type:
+            raise HTTPException(status_code=400, detail="Uploaded file content type does not match the upload session")
+
+        try:
+            self.file_table.put_item(
+                Item=metadata,
+                ConditionExpression="attribute_not_exists(file_id)",
+            )
+        except ClientError as exc:
+            raise HTTPException(status_code=409, detail="Upload session has already been completed") from exc
+        self.increment_children_count(parent_folder_id)
 
         return {
             "uploaded": file_id,
@@ -517,6 +601,78 @@ class ObjectStorageService:
 
         response = self.dev_log_table.get_item(Key={"log_id": log_id})
         return response.get("Item")
+
+    def build_upload_post_conditions(self, file_type: str):
+        conditions = [
+            ["content-length-range", 1, self.MAX_UPLOAD_BYTES],
+        ]
+        normalized_file_type = str(file_type or "").strip()
+        if normalized_file_type:
+            conditions.append({"Content-Type": normalized_file_type})
+        return conditions
+
+    def get_upload_signing_client(self):
+        if self._upload_signing_client is None:
+            bucket_region = self.get_bucket_region()
+            endpoint_url = None if bucket_region == "us-east-1" else f"https://s3.{bucket_region}.amazonaws.com"
+            self._upload_signing_client = boto3.client(
+                "s3",
+                region_name=bucket_region,
+                endpoint_url=endpoint_url,
+                config=Config(signature_version="s3v4"),
+            )
+        return self._upload_signing_client
+
+    def get_bucket_region(self):
+        if self._bucket_region is not None:
+            return self._bucket_region
+
+        response = self.s3.get_bucket_location(Bucket=self.bucket)
+        location = response.get("LocationConstraint")
+        self._bucket_region = location or "us-east-1"
+        return self._bucket_region
+
+    def encode_upload_token(
+        self,
+        *,
+        file_id: str,
+        parent_folder_id: str | None,
+        file_name: str,
+        file_extension: str,
+        content_type: str,
+        object_key: str,
+        issued_at: datetime,
+    ):
+        expires_at = int(issued_at.timestamp()) + self.DIRECT_UPLOAD_EXPIRES_SECONDS
+        return jwt.encode(
+            {
+                "sub": self.user_id,
+                "file_id": file_id,
+                "parent_folder_id": parent_folder_id or "",
+                "file_name": file_name,
+                "file_extension": file_extension,
+                "content_type": content_type,
+                "object_key": object_key,
+                "exp": expires_at,
+            },
+            auth_settings.jwt_secret,
+            algorithm=auth_settings.jwt_algorithm,
+        )
+
+    def decode_upload_token(self, upload_token: str):
+        try:
+            payload = jwt.decode(
+                upload_token,
+                auth_settings.jwt_secret,
+                algorithms=[auth_settings.jwt_algorithm],
+            )
+        except jwt.InvalidTokenError as exc:
+            raise HTTPException(status_code=400, detail="Upload session is invalid or expired") from exc
+
+        if str(payload.get("sub") or "").strip() != self.user_id:
+            raise HTTPException(status_code=403, detail="Upload session does not belong to the current user")
+
+        return payload
 
     def restore_objects(self, file_ids: list[str]):
         normalized_ids = self.normalize_file_ids(file_ids)
@@ -1081,3 +1237,7 @@ class ObjectStorageService:
     @staticmethod
     def now_iso():
         return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def iso_from_datetime(value: datetime):
+        return value.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")

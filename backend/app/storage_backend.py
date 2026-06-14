@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, Depends
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import boto3
@@ -27,6 +27,17 @@ class ObjectSelectionRequest(BaseModel):
 
 class DevHardDeleteRequest(BaseModel):
     folder_id: str = ""
+
+
+class UploadInitRequest(BaseModel):
+    file_name: str
+    file_size: int
+    file_type: str = ""
+    folder_id: str = ""
+
+
+class UploadCompleteRequest(BaseModel):
+    upload_token: str
 
 
 app.add_middleware(
@@ -83,13 +94,25 @@ def list_trash(
     return storage_service.list_trashed_files()
 
 
-@app.post("/api/upload")
-async def upload(
-    file: UploadFile = File(...),
-    folder_id: str = Form(""),
+@app.post("/api/upload/init")
+def upload_init(
+    request: UploadInitRequest,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.upload_file(file, folder_id)
+    return storage_service.start_direct_upload(
+        file_name=request.file_name,
+        file_size=request.file_size,
+        file_type=request.file_type,
+        folder_id=request.folder_id,
+    )
+
+
+@app.post("/api/upload/complete")
+def upload_complete(
+    request: UploadCompleteRequest,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.complete_direct_upload(request.upload_token)
 
 
 @app.get("/api/files/{file_id}/download")

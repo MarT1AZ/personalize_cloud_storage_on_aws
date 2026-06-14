@@ -144,6 +144,43 @@ async function api(path, options = {}) {
   return payload;
 }
 
+async function uploadToPresignedPost(uploadUrl, uploadFields, file) {
+  const formData = new FormData();
+  Object.entries(uploadFields || {}).forEach(([key, value]) => {
+    formData.append(key, value);
+  });
+  formData.append('file', file);
+
+  const response = await fetch(uploadUrl, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const payload = await response.text();
+    const message = extractS3UploadError(payload) || `S3 upload failed (${response.status})`;
+    throw new Error(message || 'S3 upload failed');
+  }
+}
+
+function extractS3UploadError(payload) {
+  const text = String(payload || '').trim();
+  if (!text) {
+    return '';
+  }
+
+  const codeMatch = text.match(/<Code>([^<]+)<\/Code>/i);
+  const messageMatch = text.match(/<Message>([^<]+)<\/Message>/i);
+
+  if (codeMatch || messageMatch) {
+    const code = codeMatch?.[1]?.trim() || 'S3Error';
+    const message = messageMatch?.[1]?.trim() || 'Upload rejected by S3';
+    return `${code}: ${message}`;
+  }
+
+  return text;
+}
+
 export default function App() {
   const [authToken, setAuthToken] = useState('');
   const [authUser, setAuthUser] = useState(null);
@@ -450,13 +487,28 @@ export default function App() {
       setError('');
       setSuccess('');
       setUploading(true);
-      const formData = new FormData();
-      formData.append('file', selectedFile);
-      formData.append('folder_id', currentFolderId);
-
-      await api('/upload', {
+      const uploadInit = await api('/upload/init', {
         method: 'POST',
-        body: formData,
+        body: JSON.stringify({
+          file_name: selectedFile.name,
+          file_size: selectedFile.size,
+          file_type: selectedFile.type || '',
+          folder_id: currentFolderId,
+        }),
+        authToken,
+      });
+
+      await uploadToPresignedPost(
+        uploadInit?.upload_url || '',
+        uploadInit?.upload_fields || {},
+        selectedFile,
+      );
+
+      await api('/upload/complete', {
+        method: 'POST',
+        body: JSON.stringify({
+          upload_token: uploadInit?.upload_token || '',
+        }),
         authToken,
       });
 
