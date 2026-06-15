@@ -234,6 +234,22 @@ export default function App() {
   const [devDeleteFolderId, setDevDeleteFolderId] = useState('');
   const [devDeleting, setDevDeleting] = useState(false);
   const [devDeleteFolderLabel, setDevDeleteFolderLabel] = useState('');
+  const [devMoveMode, setDevMoveMode] = useState(false);
+  const [devMoveState, setDevMoveState] = useState({
+    dev_move: false,
+    dev_move_log_id: '',
+    dev_move_source_id: '',
+    dev_move_destination_folder_id: '',
+    dev_move_phase: 'idle',
+    dev_move_mode: '',
+    dev_move_source_kind: '',
+  });
+  const [devMoveSourceId, setDevMoveSourceId] = useState('');
+  const [devMoveSourceLabel, setDevMoveSourceLabel] = useState('');
+  const [devMoveSourceKind, setDevMoveSourceKind] = useState('');
+  const [devMoveDestinationId, setDevMoveDestinationId] = useState('');
+  const [devMoveDestinationLabel, setDevMoveDestinationLabel] = useState('');
+  const [devMoving, setDevMoving] = useState(false);
 
   const visibleItems = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
@@ -283,6 +299,7 @@ export default function App() {
     setDeleteObjectId('');
     setDeleteMode(false);
     setDevPurgeMode(false);
+    setDevMoveMode(false);
     setDeleteConfirmKey('');
     setDeleting('');
     setTrashAction('');
@@ -305,6 +322,21 @@ export default function App() {
     setDevDeleteFolderId('');
     setDevDeleting(false);
     setDevDeleteFolderLabel('');
+    setDevMoveState({
+      dev_move: false,
+      dev_move_log_id: '',
+      dev_move_source_id: '',
+      dev_move_destination_folder_id: '',
+      dev_move_phase: 'idle',
+      dev_move_mode: '',
+      dev_move_source_kind: '',
+    });
+    setDevMoveSourceId('');
+    setDevMoveSourceLabel('');
+    setDevMoveSourceKind('');
+    setDevMoveDestinationId('');
+    setDevMoveDestinationLabel('');
+    setDevMoving(false);
   }
 
   function handleLogout() {
@@ -412,6 +444,28 @@ export default function App() {
     }
   }
 
+  async function loadDevMoveState() {
+    try {
+      const data = await api('/dev/move-state', { authToken });
+      setDevMoveState({
+        dev_move: !!data?.dev_move,
+        dev_move_log_id: data?.dev_move_log_id || '',
+        dev_move_source_id: data?.dev_move_source_id || '',
+        dev_move_destination_folder_id: data?.dev_move_destination_folder_id || '',
+        dev_move_phase: data?.dev_move_phase || 'idle',
+        dev_move_mode: data?.dev_move_mode || '',
+        dev_move_source_kind: data?.dev_move_source_kind || '',
+      });
+    } catch (err) {
+      if (err.message === 'Invalid or expired token') {
+        handleLogout();
+        setAuthError('Your session expired. Please log in again.');
+      } else {
+        setError(err.message || 'Could not load dev move state');
+      }
+    }
+  }
+
   useEffect(() => {
     async function restoreSession() {
       const storedToken = localStorage.getItem(AUTH_TOKEN_KEY) || '';
@@ -442,6 +496,7 @@ export default function App() {
     if (authUser && authToken) {
       loadFiles('');
       loadDevDeletionState();
+      loadDevMoveState();
     }
   }, [authUser, authToken]);
 
@@ -729,6 +784,7 @@ export default function App() {
 
     setDeleteConfirmKey('');
     setDeleteMode(false);
+    setDevMoveMode(false);
     setDevPurgeMode((current) => {
       if (current) {
         setDevDeleteFolderId('');
@@ -736,6 +792,91 @@ export default function App() {
       }
       return !current;
     });
+  }
+
+  function toggleDevMoveMode() {
+    if (viewMode === 'trash') {
+      return;
+    }
+
+    setDeleteConfirmKey('');
+    setDeleteMode(false);
+    setDevPurgeMode(false);
+    setDevMoveMode((current) => {
+      if (current) {
+        setDevMoveSourceId('');
+        setDevMoveSourceLabel('');
+        setDevMoveSourceKind('');
+        setDevMoveDestinationId('');
+        setDevMoveDestinationLabel('');
+      }
+      return !current;
+    });
+  }
+
+  function selectItemForDevMoveSource(item) {
+    const sourceId = normalizeId(item?.file_id || item?.folder_id);
+    if (!sourceId) return;
+
+    setDevMoveSourceId(sourceId);
+    setDevMoveSourceLabel(item?.path || item?.name || sourceId);
+    setDevMoveSourceKind(item?.kind || '');
+    setSuccess(`Selected ${item?.path || item?.name || sourceId} as move source.`);
+    setError('');
+  }
+
+  function selectFolderForDevMoveDestination(folder) {
+    const destinationId = normalizeId(folder?.file_id || folder?.folder_id);
+    if (!destinationId) return;
+
+    setDevMoveDestinationId(destinationId);
+    setDevMoveDestinationLabel(folder?.path || folder?.name || destinationId);
+    setSuccess(`Selected ${folder?.path || folder?.name || destinationId} as move destination.`);
+    setError('');
+  }
+
+  function useCurrentFolderAsMoveDestination() {
+    setDevMoveDestinationId(currentFolderId || '');
+    setDevMoveDestinationLabel(currentPath || '/');
+    setSuccess(`Selected ${currentPath || '/'} as move destination.`);
+    setError('');
+  }
+
+  async function handleDevMove(mode, { resume = false } = {}) {
+    const sourceId = resume ? '' : normalizeId(devMoveSourceId);
+    const destinationId = resume ? '' : normalizeId(devMoveDestinationId);
+    if (!resume && !sourceId) return;
+
+    try {
+      setError('');
+      setSuccess('');
+      setDevMoving(true);
+      const data = await api('/dev/move', {
+        method: 'POST',
+        body: JSON.stringify({
+          source_id: sourceId,
+          destination_folder_id: destinationId,
+          mode,
+        }),
+        authToken,
+      });
+      setDevMoveSourceId('');
+      setDevMoveSourceLabel('');
+      setDevMoveSourceKind('');
+      setDevMoveDestinationId('');
+      setDevMoveDestinationLabel('');
+      setSuccess(
+        `${data?.resumed ? 'Resumed' : 'Started'} move for ${data?.source_entry_id || sourceId}. Copied ${Number(data?.moved_folders || 0)} folder${Number(data?.moved_folders || 0) === 1 ? '' : 's'} and ${Number(data?.moved_files || 0)} file${Number(data?.moved_files || 0) === 1 ? '' : 's'}.`,
+      );
+      await loadFiles(currentFolderId, true, true, true);
+      await loadDevMoveState();
+      await loadDevDeletionState();
+    } catch (err) {
+      setError(err.message || 'Move failed');
+      await loadDevMoveState();
+    } finally {
+      setDevMoving(false);
+    }
   }
 
   async function handleRename(file) {
@@ -925,6 +1066,7 @@ export default function App() {
               setDeleteConfirmKey('');
               setSelectedDeleteIds({});
               setDevPurgeMode(false);
+              setDevMoveMode(false);
               setDevDeleteFolderId('');
               setDevDeleteFolderLabel('');
               setDeleteMode((current) => !current);
@@ -933,6 +1075,14 @@ export default function App() {
             type="button"
           >
             {deleteMode ? 'Exit Delete' : 'Delete'}
+          </button>
+          <button
+            className={devMoveMode ? 'dev-danger-button' : 'secondary-button'}
+            onClick={toggleDevMoveMode}
+            disabled={viewMode === 'trash'}
+            type="button"
+          >
+            {devMoveMode ? 'Exit Dev Move' : 'Dev Move'}
           </button>
           <button
             className={devPurgeMode ? 'dev-danger-button' : 'secondary-button'}
@@ -948,6 +1098,7 @@ export default function App() {
               setDeleteConfirmKey('');
               setDeleteMode(false);
               setDevPurgeMode(false);
+              setDevMoveMode(false);
               setDevDeleteFolderId('');
               setDevDeleteFolderLabel('');
               if (viewMode === 'trash') {
@@ -1057,6 +1208,18 @@ export default function App() {
                 </div>
               </div>
             ) : null}
+            {viewMode === 'files' && devMoveMode ? (
+              <div className="delete-history-box dev-purge-box">
+                <div className="delete-history-title">Dev move selection</div>
+                <div className="delete-history-list">
+                  <div className="helper-text">
+                    Mark one file or folder as the source, then mark one folder or the current path as the destination.
+                  </div>
+                  {devMoveSourceLabel ? <div className="delete-tag">Source: {devMoveSourceLabel}</div> : null}
+                  {devMoveDestinationLabel ? <div className="delete-tag">Destination: {devMoveDestinationLabel}</div> : null}
+                </div>
+              </div>
+            ) : null}
             {viewMode === 'trash' ? (
               <div className="delete-history-box">
                 <div className="delete-history-title">Selection</div>
@@ -1132,8 +1295,10 @@ export default function App() {
                   }
 
                   if (item.kind === 'folder') {
+                    const isMoveSource = devMoveMode && normalizeId(devMoveSourceId) === normalizeId(item.file_id);
+                    const isMoveDestination = devMoveMode && normalizeId(devMoveDestinationId) === normalizeId(item.file_id);
                     return (
-                      <li className="file-row folder-row" key={item.file_id}>
+                      <li className={`file-row folder-row${isMoveSource ? ' dev-move-source-row' : ''}${isMoveDestination ? ' dev-move-destination-row' : ''}`} key={item.file_id}>
                         <div className="folder-row-shell">
                           <button className="folder-open-button" onClick={() => handleOpenFolder(item.file_id)} type="button">
                             <span className="folder-icon" aria-hidden="true">DIR</span>
@@ -1173,6 +1338,44 @@ export default function App() {
                                 {normalizeId(devDeleteFolderId) === normalizeId(item.file_id) ? 'Selected' : 'Select'}
                               </button>
                             </div>
+                          ) : devMoveMode ? (
+                            <div className="row-actions">
+                              <button
+                                className={isMoveSource ? 'dev-danger-button' : 'secondary-button'}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (isMoveSource) {
+                                    setDevMoveSourceId('');
+                                    setDevMoveSourceLabel('');
+                                    setDevMoveSourceKind('');
+                                    setSuccess(`Cleared move source for ${item.path || item.name || item.file_id}.`);
+                                    setError('');
+                                  } else {
+                                    selectItemForDevMoveSource(item);
+                                  }
+                                }}
+                                type="button"
+                              >
+                                {isMoveSource ? 'Source' : 'Mark source'}
+                              </button>
+                              <button
+                                className={isMoveDestination ? 'dev-danger-button' : 'secondary-button'}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  if (isMoveDestination) {
+                                    setDevMoveDestinationId('');
+                                    setDevMoveDestinationLabel('');
+                                    setSuccess(`Cleared move destination for ${item.path || item.name || item.file_id}.`);
+                                    setError('');
+                                  } else {
+                                    selectFolderForDevMoveDestination(item);
+                                  }
+                                }}
+                                type="button"
+                              >
+                                {isMoveDestination ? 'Destination' : 'Mark destination'}
+                              </button>
+                            </div>
                           ) : (
                             null
                           )}
@@ -1182,9 +1385,10 @@ export default function App() {
                   }
 
                   const renamePreview = buildRenamedObjectName(renameDrafts[item.file_id] || '', item.file_extension || '');
+                  const isMoveSource = devMoveMode && normalizeId(devMoveSourceId) === normalizeId(item.file_id);
                   return (
                     <li
-                      className="file-row"
+                      className={`file-row${isMoveSource ? ' dev-move-source-row' : ''}`}
                       key={item.file_id}
                       data-file-key={item.file_id}
                       onContextMenu={(event) => {
@@ -1284,6 +1488,25 @@ export default function App() {
                           ) : (
                             <button className="danger-button" onClick={() => setDeleteConfirmKey(item.file_id)} type="button">Delete</button>
                           )
+                        ) : null}
+                        {devMoveMode ? (
+                          <button
+                            className={isMoveSource ? 'dev-danger-button' : 'secondary-button'}
+                            onClick={() => {
+                              if (isMoveSource) {
+                                setDevMoveSourceId('');
+                                setDevMoveSourceLabel('');
+                                setDevMoveSourceKind('');
+                                setSuccess(`Cleared move source for ${item.path || item.name || item.file_id}.`);
+                                setError('');
+                              } else {
+                                selectItemForDevMoveSource(item);
+                              }
+                            }}
+                            type="button"
+                          >
+                            {isMoveSource ? 'Source' : 'Mark source'}
+                          </button>
                         ) : null}
                         <button className="ghost-button" onClick={() => setActionMenuKey((current) => (current === item.file_id ? '' : item.file_id))} type="button">
                           Actions
@@ -1402,6 +1625,89 @@ export default function App() {
                     type="button"
                   >
                     {devDeleting ? 'Resuming...' : 'Resume pending delete'}
+                  </button>
+                </div>
+              </section>
+
+              <section className="panel side-panel dev-tool-panel">
+                <div className="section-head">
+                  <h2>Dev move</h2>
+                </div>
+                <div className="stack-form">
+                  <div className="dev-tool-chip-row">
+                    <span className="dev-tool-chip dev-tool-chip-blue">DFS copy</span>
+                    <span className="dev-tool-chip dev-tool-chip-red">Move + purge</span>
+                  </div>
+                  <label className="field">
+                    <span>Source id</span>
+                    <input
+                      type="text"
+                      value={devMoveSourceId}
+                      onChange={(event) => setDevMoveSourceId(event.target.value)}
+                      placeholder="file or folder id"
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Destination folder id</span>
+                    <input
+                      type="text"
+                      value={devMoveDestinationId}
+                      onChange={(event) => setDevMoveDestinationId(event.target.value)}
+                      placeholder="folder id or empty for root"
+                    />
+                  </label>
+                  <div className="helper-text">
+                    Mark source and destination from the list, or type the ids directly. Source can be a file or folder.
+                  </div>
+                  <button className="secondary-button" onClick={useCurrentFolderAsMoveDestination} type="button">
+                    Use current folder as destination
+                  </button>
+                  {devMoveSourceLabel ? (
+                    <div className="dev-tool-status">
+                      <div>Source: {devMoveSourceLabel}</div>
+                      <div>Kind: {devMoveSourceKind || 'unknown'}</div>
+                      <div>Id: {devMoveSourceId}</div>
+                    </div>
+                  ) : null}
+                  {devMoveDestinationLabel ? (
+                    <div className="dev-tool-status">
+                      <div>Destination: {devMoveDestinationLabel}</div>
+                      <div>Id: {devMoveDestinationId || '__root__'}</div>
+                    </div>
+                  ) : null}
+                  {devMoveState.dev_move ? (
+                    <div className="dev-tool-status">
+                      <div>In progress: {devMoveState.dev_move_source_id || 'unknown source'}</div>
+                      <div>Kind: {devMoveState.dev_move_source_kind || 'unknown'}</div>
+                      <div>Mode: {devMoveState.dev_move_mode || 'merge'}</div>
+                      <div>Phase: {devMoveState.dev_move_phase || 'copying'}</div>
+                    </div>
+                  ) : (
+                    <div className="dev-tool-status dev-tool-status-idle">No dev move is active.</div>
+                  )}
+                  <button
+                    className="dev-danger-button"
+                    onClick={() => handleDevMove('merge')}
+                    disabled={!normalizeId(devMoveSourceId) || devMoving}
+                    type="button"
+                  >
+                    {devMoving ? 'Moving...' : 'Start merge move'}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => handleDevMove('avoid_conflict')}
+                    disabled={!normalizeId(devMoveSourceId) || devMoving}
+                    type="button"
+                  >
+                    {devMoving ? 'Preparing...' : 'Start avoid-conflict move'}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    onClick={() => handleDevMove(devMoveState.dev_move_mode || 'merge', { resume: true })}
+                    disabled={!devMoveState.dev_move || devMoving}
+                    type="button"
+                  >
+                    {devMoving ? 'Resuming...' : 'Resume pending move'}
                   </button>
                 </div>
               </section>

@@ -18,6 +18,13 @@ class ObjectStorageService:
     DEV_LOG_STATUS_ACTIVE = "active"
     DEV_LOG_STATUS_ONGOING = "ongoing"
     DEV_LOG_STATUS_DONE = "done"
+    DEV_LOG_OPERATION_DELETE = "dev_hard_delete"
+    DEV_LOG_OPERATION_MOVE = "move"
+    MOVE_MODE_MERGE = "merge"
+    MOVE_MODE_AVOID_CONFLICT = "avoid_conflict"
+    STATUS_ACTIVE = "active"
+    STATUS_DELETED = "deleted"
+    STATUS_MOVED = "moved"
     MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
     DIRECT_UPLOAD_EXPIRES_SECONDS = 900
 
@@ -52,7 +59,7 @@ class ObjectStorageService:
             self.folder_table,
             Attr("user_id").eq(self.user_id)
             & parent_filter
-            & Attr("status").eq("active"),
+            & Attr("status").eq(self.STATUS_ACTIVE),
         ):
             folders.append(self.serialize_folder(folder_metadata, base_display_path))
 
@@ -61,7 +68,7 @@ class ObjectStorageService:
             self.file_table,
             Attr("user_id").eq(self.user_id)
             & parent_filter
-            & Attr("status").eq("active"),
+            & Attr("status").eq(self.STATUS_ACTIVE),
         ):
             size = self.get_s3_object_size(file_metadata)
             files.append(self.serialize_file(file_metadata, base_display_path, size=size))
@@ -112,7 +119,7 @@ class ObjectStorageService:
             "parent_folder_id": self.to_storage_parent_folder_id(parent_folder_id),
             "file_name": final_file_name,
             "file_extension": self.get_file_extension(final_file_name),
-            "status": "active",
+            "status": self.STATUS_ACTIVE,
             "created_at": self.iso_from_datetime(now),
             "deleted_at": None,
         }
@@ -182,7 +189,7 @@ class ObjectStorageService:
             "parent_folder_id": self.to_storage_parent_folder_id(parent_folder_id),
             "file_name": file_name,
             "file_extension": file_extension or self.get_file_extension(file_name),
-            "status": "active",
+            "status": self.STATUS_ACTIVE,
             "created_at": self.now_iso(),
             "deleted_at": None,
         }
@@ -219,7 +226,7 @@ class ObjectStorageService:
             "user_id": self.user_id,
             "parent_folder_id": self.to_storage_parent_folder_id(parent_folder["folder_id"] if parent_folder else None),
             "folder_name": normalized_name,
-            "status": "active",
+            "status": self.STATUS_ACTIVE,
             "created_at": now,
             "deleted_at": None,
             "children_count": 0,
@@ -305,6 +312,179 @@ class ObjectStorageService:
             "dev_deletion_phase": str(metadata.get("phase") or "idle").strip() or "idle",
             "dev_deletion_log_id": str(metadata.get("log_id") or "").strip(),
             "dev_deletion_status": str(metadata.get("status") or "").strip(),
+        }
+
+    def get_dev_move_state(self):
+        metadata = self.get_active_dev_move_log()
+        if not metadata:
+            return {
+                "dev_move": False,
+                "dev_move_log_id": "",
+                "dev_move_source_id": "",
+                "dev_move_destination_folder_id": "",
+                "dev_move_phase": "idle",
+                "dev_move_mode": "",
+                "dev_move_source_kind": "",
+            }
+
+        return {
+            "dev_move": metadata.get("status") in {self.DEV_LOG_STATUS_ACTIVE, self.DEV_LOG_STATUS_ONGOING},
+            "dev_move_log_id": str(metadata.get("log_id") or "").strip(),
+            "dev_move_source_id": str(metadata.get("source_entry_id") or "").strip(),
+            "dev_move_destination_folder_id": str(metadata.get("destination_folder_id") or "").strip(),
+            "dev_move_phase": str(metadata.get("phase") or "idle").strip() or "idle",
+            "dev_move_mode": str(metadata.get("move_mode") or "").strip(),
+            "dev_move_source_kind": str(metadata.get("source_entry_kind") or "").strip(),
+        }
+
+    def dev_move_entry(self, source_id: str = "", destination_folder_id: str = "", mode: str = MOVE_MODE_MERGE):
+        active_delete_log = self.get_active_dev_deletion_log()
+        if active_delete_log:
+            active_root_id = self.normalize_id(active_delete_log.get("root_folder_id"))
+            raise HTTPException(
+                status_code=409,
+                detail=f"A dev deletion is already in progress for folder '{active_root_id}'. Finish that purge before moving.",
+            )
+
+        active_move_log = self.get_active_dev_move_log()
+        if active_move_log:
+            normalized_source_id = self.normalize_id(source_id)
+            active_source_id = self.normalize_id(active_move_log.get("source_entry_id"))
+            if normalized_source_id and active_source_id and normalized_source_id != active_source_id:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"A move is already in progress for entry '{active_source_id}'. Resume that move first.",
+                )
+            return self.resume_dev_move(active_move_log)
+
+        normalized_source_id = self.normalize_id(source_id)
+        if not normalized_source_id:
+            raise HTTPException(status_code=400, detail="Source id is required")
+
+        normalized_destination_id = self.normalize_id(destination_folder_id) or None
+        normalized_mode = self.normalize_move_mode(mode)
+        source_metadata, source_kind = self.get_entry_for_move(normalized_source_id)
+
+        if normalized_destination_id:
+            self.get_folder(normalized_destination_id, require_active=True)
+
+        if source_kind == "folder":
+            self.ensure_destination_is_not_inside_source(source_metadata["folder_id"], normalized_destination_id)
+            source_parent_id = self.from_storage_parent_folder_id(source_metadata.get("parent_folder_id"))
+            if normalized_destination_id == source_parent_id:
+                raise HTTPException(status_code=400, detail="Source folder is already inside that destination")
+        else:
+            source_parent_id = self.from_storage_parent_folder_id(source_metadata.get("parent_folder_id"))
+            if normalized_destination_id and normalized_destination_id == source_parent_id:
+                raise HTTPException(status_code=400, detail="Source is already inside that folder")
+
+        log_metadata = self.create_dev_move_log(
+            source_id=normalized_source_id,
+            source_kind=source_kind,
+            source_parent_id=source_parent_id,
+            destination_folder_id=normalized_destination_id,
+            mode=normalized_mode,
+        )
+        return self.run_dev_move(log_metadata, resumed=False)
+
+    def resume_dev_move(self, log_metadata=None):
+        log_metadata = log_metadata or self.get_active_dev_move_log()
+        if not log_metadata:
+            raise HTTPException(status_code=400, detail="No move is in progress")
+
+        return self.run_dev_move(log_metadata, resumed=True)
+
+    def run_dev_move(self, log_metadata, resumed: bool):
+        source_id = self.normalize_id(log_metadata.get("source_entry_id"))
+        source_kind = str(log_metadata.get("source_entry_kind") or "").strip()
+        destination_folder_id = self.normalize_id(log_metadata.get("destination_folder_id")) or None
+        source_parent_id = self.normalize_id(log_metadata.get("source_parent_folder_id")) or None
+        move_mode = self.normalize_move_mode(log_metadata.get("move_mode"))
+        summary = {
+            "copied_files": int(log_metadata.get("moved_files_count") or 0),
+            "copied_folders": int(log_metadata.get("moved_folders_count") or 0),
+            "purged_files": int(log_metadata.get("purged_files_count") or 0),
+            "purged_folders": int(log_metadata.get("purged_folders_count") or 0),
+        }
+
+        source_metadata, _ = self.get_entry_for_move(source_id)
+
+        try:
+            phase = str(log_metadata.get("phase") or "active").strip() or "active"
+            if phase in {"active", "copying"}:
+                self.update_dev_move_log(
+                    log_metadata["log_id"],
+                    status=self.DEV_LOG_STATUS_ONGOING,
+                    phase="copying",
+                    last_error="",
+                )
+                if source_kind == "folder":
+                    self.move_folder_subtree(
+                        source_metadata,
+                        destination_folder_id,
+                        move_mode,
+                        summary,
+                        is_root=True,
+                    )
+                else:
+                    self.move_single_file(
+                        source_metadata,
+                        destination_folder_id,
+                        move_mode,
+                        summary,
+                        is_root=True,
+                    )
+                phase = "purging"
+
+            if phase in {"purge_pending", "purging", "copying"}:
+                self.update_dev_move_log(
+                    log_metadata["log_id"],
+                    status=self.DEV_LOG_STATUS_ONGOING,
+                    phase="purging",
+                    last_error="",
+                    moved_files_count=summary["copied_files"],
+                    moved_folders_count=summary["copied_folders"],
+                )
+                self.purge_moved_source(source_kind, source_id, summary)
+                if source_parent_id:
+                    self.reconcile_folder_children_count_chain(source_parent_id)
+
+            self.update_dev_move_log(
+                log_metadata["log_id"],
+                status=self.DEV_LOG_STATUS_DONE,
+                phase="completed",
+                last_error="",
+                moved_files_count=summary["copied_files"],
+                moved_folders_count=summary["copied_folders"],
+                purged_files_count=summary["purged_files"],
+                purged_folders_count=summary["purged_folders"],
+                completed_at=self.now_iso(),
+            )
+        except Exception as exc:
+            next_phase = phase if phase == "purging" else "copying"
+            self.update_dev_move_log(
+                log_metadata["log_id"],
+                status=self.DEV_LOG_STATUS_ONGOING,
+                phase=next_phase,
+                last_error=str(exc),
+                moved_files_count=summary["copied_files"],
+                moved_folders_count=summary["copied_folders"],
+                purged_files_count=summary["purged_files"],
+                purged_folders_count=summary["purged_folders"],
+            )
+            raise
+
+        return {
+            "source_entry_id": source_id,
+            "source_entry_kind": source_kind,
+            "destination_folder_id": destination_folder_id or "",
+            "mode": move_mode,
+            "resumed": resumed,
+            "moved_files": summary["copied_files"],
+            "moved_folders": summary["copied_folders"],
+            "purged_files": summary["purged_files"],
+            "purged_folders": summary["purged_folders"],
+            "phase": "completed",
         }
 
     def dev_hard_delete_folder(self, folder_id: str = ""):
@@ -453,6 +633,24 @@ class ObjectStorageService:
         self.hard_delete_folder(next_folder_metadata)
         summary["deleted_folders"] += 1
 
+    def purge_moved_source(self, source_kind: str, source_id: str, summary: dict):
+        if source_kind == "file":
+            source_file = self.get_file_or_none(source_id)
+            if source_file and source_file.get("user_id") == self.user_id:
+                self.dev_delete_file(source_file, source_id)
+                summary["purged_files"] += 1
+            return
+
+        source_folder = self.get_folder_or_none(source_id)
+        if source_folder and source_folder.get("user_id") == self.user_id:
+            purge_summary = {
+                "deleted_files": summary["purged_files"],
+                "deleted_folders": summary["purged_folders"],
+            }
+            self.dev_delete_folder_subtree(source_folder, source_id, purge_summary)
+            summary["purged_files"] = purge_summary["deleted_files"]
+            summary["purged_folders"] = purge_summary["deleted_folders"]
+
     def dev_delete_file(self, metadata, root_id: str):
         self.mark_file_deletion_pending(metadata["file_id"], root_id)
         self.s3.delete_object(
@@ -479,6 +677,213 @@ class ObjectStorageService:
         child_folders.sort(key=lambda item: ((item.get("folder_name") or "").lower(), item.get("folder_id") or ""))
         child_files.sort(key=lambda item: ((item.get("file_name") or "").lower(), item.get("file_id") or ""))
         return child_folders, child_files
+
+    def move_folder_subtree(
+        self,
+        source_folder_metadata,
+        destination_parent_id: str | None,
+        move_mode: str,
+        summary: dict,
+        *,
+        is_root: bool,
+    ):
+        if source_folder_metadata.get("status") == self.STATUS_MOVED:
+            target_folder_id = self.normalize_id(source_folder_metadata.get("moved_target_folder_id")) or None
+        else:
+            target_folder = self.resolve_target_folder_for_move(
+                source_folder_metadata,
+                destination_parent_id,
+                move_mode,
+                is_root=is_root,
+            )
+            target_folder_id = target_folder["folder_id"]
+            self.mark_folder_moved(source_folder_metadata["folder_id"], target_folder_id)
+            summary["copied_folders"] += 1
+
+        child_folders, child_files = self.list_direct_children(source_folder_metadata["folder_id"])
+
+        for child_folder in child_folders:
+            if child_folder.get("status") == self.STATUS_MOVED:
+                continue
+            self.move_folder_subtree(
+                child_folder,
+                target_folder_id,
+                move_mode,
+                summary,
+                is_root=False,
+            )
+
+        for child_file in child_files:
+            if child_file.get("status") == self.STATUS_MOVED:
+                continue
+            self.move_single_file(
+                child_file,
+                target_folder_id,
+                move_mode,
+                summary,
+                is_root=False,
+            )
+
+    def move_single_file(
+        self,
+        source_file_metadata,
+        destination_parent_id: str | None,
+        move_mode: str,
+        summary: dict,
+        *,
+        is_root: bool,
+    ):
+        if source_file_metadata.get("status") == self.STATUS_MOVED:
+            return
+
+        target_metadata = self.create_target_file_for_move(
+            source_file_metadata,
+            destination_parent_id,
+            move_mode,
+            is_root=is_root,
+        )
+        self.copy_file_in_s3(source_file_metadata, target_metadata)
+        self.file_table.put_item(Item=target_metadata)
+        self.increment_children_count(destination_parent_id)
+        self.mark_file_moved(source_file_metadata["file_id"], target_metadata["file_id"])
+        summary["copied_files"] += 1
+
+    def resolve_target_folder_for_move(
+        self,
+        source_folder_metadata,
+        destination_parent_id: str | None,
+        move_mode: str,
+        *,
+        is_root: bool,
+    ):
+        requested_name = str(source_folder_metadata.get("folder_name") or "").strip()
+        source_folder_id = self.normalize_id(source_folder_metadata.get("folder_id"))
+        active_match = self.find_folder_by_name(
+            destination_parent_id,
+            requested_name,
+            statuses={self.STATUS_ACTIVE},
+            ignore_folder_id=source_folder_id,
+        )
+        deleted_match = self.find_folder_by_name(
+            destination_parent_id,
+            requested_name,
+            statuses={self.STATUS_DELETED},
+            ignore_folder_id=source_folder_id,
+        )
+
+        if move_mode == self.MOVE_MODE_MERGE and active_match:
+            return active_match
+
+        if active_match and is_root and move_mode == self.MOVE_MODE_AVOID_CONFLICT:
+            folder_name = self.build_move_root_folder_name(destination_parent_id, requested_name)
+            return self.create_folder_metadata_only(destination_parent_id, folder_name, status=self.STATUS_ACTIVE)
+
+        if active_match:
+            return active_match
+
+        if deleted_match:
+            self.revive_folder_for_move(deleted_match, requested_name)
+            return self.get_folder(deleted_match["folder_id"], require_active=True)
+
+        return self.create_folder_metadata_only(destination_parent_id, requested_name, status=self.STATUS_ACTIVE)
+
+    def create_target_file_for_move(
+        self,
+        source_file_metadata,
+        destination_parent_id: str | None,
+        move_mode: str,
+        *,
+        is_root: bool,
+    ):
+        source_status = source_file_metadata.get("status")
+        requested_name = str(source_file_metadata.get("file_name") or "").strip()
+        final_name = requested_name
+
+        if source_status == self.STATUS_ACTIVE:
+            if is_root and move_mode == self.MOVE_MODE_AVOID_CONFLICT:
+                final_name = self.build_move_root_file_name(destination_parent_id, requested_name)
+            elif self.has_active_file_with_name(destination_parent_id, requested_name):
+                final_name = self.build_moved_file_name(destination_parent_id, requested_name)
+
+        return {
+            "file_id": self.generate_short_id(),
+            "user_id": self.user_id,
+            "parent_folder_id": self.to_storage_parent_folder_id(destination_parent_id),
+            "file_name": final_name,
+            "file_extension": self.get_file_extension(final_name),
+            "status": source_status,
+            "created_at": self.now_iso(),
+            "deleted_at": source_file_metadata.get("deleted_at") if source_status == self.STATUS_DELETED else None,
+        }
+
+    def create_folder_metadata_only(self, parent_folder_id: str | None, folder_name: str, *, status: str):
+        metadata = {
+            "folder_id": self.generate_short_id(),
+            "user_id": self.user_id,
+            "parent_folder_id": self.to_storage_parent_folder_id(parent_folder_id),
+            "folder_name": folder_name,
+            "status": status,
+            "created_at": self.now_iso(),
+            "deleted_at": None if status == self.STATUS_ACTIVE else self.now_iso(),
+            "children_count": 0,
+        }
+        self.s3.put_object(
+            Bucket=self.bucket,
+            Key=self.build_folder_key(metadata),
+            Body=b"",
+        )
+        self.folder_table.put_item(Item=metadata)
+        self.increment_children_count(parent_folder_id)
+        return metadata
+
+    def revive_folder_for_move(self, folder_metadata, folder_name: str):
+        self.folder_table.update_item(
+            Key={"folder_id": folder_metadata["folder_id"]},
+            UpdateExpression="SET folder_name = :folder_name, #status = :status, deleted_at = :deleted_at",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":folder_name": folder_name,
+                ":status": self.STATUS_ACTIVE,
+                ":deleted_at": None,
+            },
+            ConditionExpression="attribute_exists(folder_id)",
+        )
+
+    def copy_file_in_s3(self, source_file_metadata, target_file_metadata):
+        self.s3.copy_object(
+            Bucket=self.bucket,
+            CopySource={
+                "Bucket": self.bucket,
+                "Key": self.build_file_key(source_file_metadata),
+            },
+            Key=self.build_file_key(target_file_metadata),
+        )
+
+    def mark_file_moved(self, file_id: str, target_file_id: str):
+        self.file_table.update_item(
+            Key={"file_id": file_id},
+            UpdateExpression="SET #status = :status, moved_target_file_id = :target_file_id, moved_at = :moved_at",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":status": self.STATUS_MOVED,
+                ":target_file_id": target_file_id,
+                ":moved_at": self.now_iso(),
+            },
+            ConditionExpression="attribute_exists(file_id)",
+        )
+
+    def mark_folder_moved(self, folder_id: str, target_folder_id: str):
+        self.folder_table.update_item(
+            Key={"folder_id": folder_id},
+            UpdateExpression="SET #status = :status, moved_target_folder_id = :target_folder_id, moved_at = :moved_at",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":status": self.STATUS_MOVED,
+                ":target_folder_id": target_folder_id,
+                ":moved_at": self.now_iso(),
+            },
+            ConditionExpression="attribute_exists(folder_id)",
+        )
 
     def mark_file_deletion_pending(self, file_id: str, root_id: str):
         self.file_table.update_item(
@@ -521,7 +926,7 @@ class ObjectStorageService:
                 ConditionExpression="attribute_exists(folder_id)",
             )
 
-            if folder.get("status") != "deleted" or next_count != 0:
+            if folder.get("status") != self.STATUS_DELETED or next_count != 0:
                 return
 
             parent_folder_id = self.from_storage_parent_folder_id(folder.get("parent_folder_id"))
@@ -530,25 +935,46 @@ class ObjectStorageService:
             current_folder_id = parent_folder_id
 
     def get_active_dev_deletion_log(self):
-        candidates = self.scan_table(
-            self.dev_log_table,
-            Attr("user_id").eq(self.user_id)
-            & (
-                Attr("status").eq(self.DEV_LOG_STATUS_ACTIVE)
-                | Attr("status").eq(self.DEV_LOG_STATUS_ONGOING)
-            ),
-        )
+        candidates = self.scan_active_dev_logs({self.DEV_LOG_OPERATION_DELETE})
         if not candidates:
             return None
 
         candidates.sort(key=lambda item: ((item.get("updated_at") or ""), (item.get("created_at") or "")), reverse=True)
         return candidates[0]
 
+    def get_active_dev_move_log(self):
+        candidates = self.scan_active_dev_logs({self.DEV_LOG_OPERATION_MOVE})
+        if not candidates:
+            return None
+
+        candidates.sort(key=lambda item: ((item.get("updated_at") or ""), (item.get("created_at") or "")), reverse=True)
+        return candidates[0]
+
+    def scan_active_dev_logs(self, operation_types: set[str]):
+        operation_filter = None
+        for operation_type in operation_types:
+            current_filter = Attr("operation_type").eq(operation_type)
+            operation_filter = current_filter if operation_filter is None else (operation_filter | current_filter)
+
+        if self.DEV_LOG_OPERATION_DELETE in operation_types:
+            operation_filter = operation_filter | Attr("operation_type").not_exists()
+
+        return self.scan_table(
+            self.dev_log_table,
+            Attr("user_id").eq(self.user_id)
+            & (
+                Attr("status").eq(self.DEV_LOG_STATUS_ACTIVE)
+                | Attr("status").eq(self.DEV_LOG_STATUS_ONGOING)
+            )
+            & operation_filter,
+        )
+
     def create_dev_deletion_log(self, root_id: str, root_parent_id: str | None):
         now = self.now_iso()
         metadata = {
             "log_id": self.generate_short_id(),
             "user_id": self.user_id,
+            "operation_type": self.DEV_LOG_OPERATION_DELETE,
             "root_folder_id": root_id,
             "root_parent_folder_id": root_parent_id or "",
             "status": self.DEV_LOG_STATUS_ACTIVE,
@@ -559,6 +985,39 @@ class ObjectStorageService:
             "last_error": "",
             "deleted_files_count": 0,
             "deleted_folders_count": 0,
+        }
+        self.dev_log_table.put_item(Item=metadata)
+        return metadata
+
+    def create_dev_move_log(
+        self,
+        *,
+        source_id: str,
+        source_kind: str,
+        source_parent_id: str | None,
+        destination_folder_id: str | None,
+        mode: str,
+    ):
+        now = self.now_iso()
+        metadata = {
+            "log_id": self.generate_short_id(),
+            "user_id": self.user_id,
+            "operation_type": self.DEV_LOG_OPERATION_MOVE,
+            "source_entry_id": source_id,
+            "source_entry_kind": source_kind,
+            "source_parent_folder_id": source_parent_id or "",
+            "destination_folder_id": destination_folder_id or "",
+            "move_mode": mode,
+            "status": self.DEV_LOG_STATUS_ACTIVE,
+            "phase": "active",
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": "",
+            "last_error": "",
+            "moved_files_count": 0,
+            "moved_folders_count": 0,
+            "purged_files_count": 0,
+            "purged_folders_count": 0,
         }
         self.dev_log_table.put_item(Item=metadata)
         return metadata
@@ -588,6 +1047,44 @@ class ObjectStorageService:
             metadata["deleted_files_count"] = int(deleted_files_count)
         if deleted_folders_count is not None:
             metadata["deleted_folders_count"] = int(deleted_folders_count)
+        if completed_at is not None:
+            metadata["completed_at"] = completed_at
+
+        metadata["updated_at"] = self.now_iso()
+        self.dev_log_table.put_item(Item=metadata)
+        return metadata
+
+    def update_dev_move_log(
+        self,
+        log_id: str,
+        *,
+        status: str | None = None,
+        phase: str | None = None,
+        last_error: str | None = None,
+        moved_files_count: int | None = None,
+        moved_folders_count: int | None = None,
+        purged_files_count: int | None = None,
+        purged_folders_count: int | None = None,
+        completed_at: str | None = None,
+    ):
+        metadata = self.get_dev_log_or_none(log_id)
+        if not metadata or metadata.get("user_id") != self.user_id:
+            raise HTTPException(status_code=404, detail="Move log not found")
+
+        if status is not None:
+            metadata["status"] = status
+        if phase is not None:
+            metadata["phase"] = phase
+        if last_error is not None:
+            metadata["last_error"] = last_error
+        if moved_files_count is not None:
+            metadata["moved_files_count"] = int(moved_files_count)
+        if moved_folders_count is not None:
+            metadata["moved_folders_count"] = int(moved_folders_count)
+        if purged_files_count is not None:
+            metadata["purged_files_count"] = int(purged_files_count)
+        if purged_folders_count is not None:
+            metadata["purged_folders_count"] = int(purged_folders_count)
         if completed_at is not None:
             metadata["completed_at"] = completed_at
 
@@ -680,7 +1177,7 @@ class ObjectStorageService:
 
         for file_id in normalized_ids:
             metadata = self.get_file(file_id, require_active=False)
-            if metadata.get("status") != "deleted":
+            if metadata.get("status") != self.STATUS_DELETED:
                 raise HTTPException(status_code=400, detail="Only deleted files can be restored")
 
             target_parent_id = self.from_storage_parent_folder_id(metadata.get("parent_folder_id"))
@@ -699,7 +1196,7 @@ class ObjectStorageService:
                 ExpressionAttributeValues={
                     ":file_name": restored_file_name,
                     ":file_extension": self.get_file_extension(restored_file_name),
-                    ":status": "active",
+                    ":status": self.STATUS_ACTIVE,
                     ":deleted_at": None,
                 },
                 ConditionExpression="attribute_exists(file_id)",
@@ -738,7 +1235,7 @@ class ObjectStorageService:
 
         for file_id in normalized_ids:
             metadata = self.get_file(file_id, require_active=False)
-            if metadata.get("status") != "deleted":
+            if metadata.get("status") != self.STATUS_DELETED:
                 raise HTTPException(status_code=400, detail="Only deleted files can be permanently deleted")
 
             self.s3.delete_object(
@@ -762,7 +1259,7 @@ class ObjectStorageService:
         }
 
     def soft_delete_file(self, metadata):
-        if metadata.get("status") != "active":
+        if metadata.get("status") != self.STATUS_ACTIVE:
             raise HTTPException(status_code=400, detail="File is not active")
 
         deleted_at = self.now_iso()
@@ -771,7 +1268,7 @@ class ObjectStorageService:
             UpdateExpression="SET #status = :status, deleted_at = :deleted_at",
             ExpressionAttributeNames={"#status": "status"},
             ExpressionAttributeValues={
-                ":status": "deleted",
+                ":status": self.STATUS_DELETED,
                 ":deleted_at": deleted_at,
             },
             ConditionExpression="attribute_exists(file_id)",
@@ -784,7 +1281,7 @@ class ObjectStorageService:
         }
 
     def soft_delete_folder(self, metadata):
-        if metadata.get("status") != "active":
+        if metadata.get("status") != self.STATUS_ACTIVE:
             raise HTTPException(status_code=400, detail="Folder is not active")
         if self.has_active_children(metadata["folder_id"]):
             raise HTTPException(status_code=400, detail="Folder still has active children")
@@ -792,7 +1289,7 @@ class ObjectStorageService:
         deleted_at = self.now_iso()
         normalized_parent_folder_id = self.from_storage_parent_folder_id(metadata.get("parent_folder_id"))
         next_metadata = dict(metadata)
-        next_metadata["status"] = "deleted"
+        next_metadata["status"] = self.STATUS_DELETED
         next_metadata["deleted_at"] = deleted_at
         next_metadata["parent_folder_id"] = normalized_parent_folder_id
         self.folder_table.update_item(
@@ -800,7 +1297,7 @@ class ObjectStorageService:
             UpdateExpression="SET #status = :status, deleted_at = :deleted_at",
             ExpressionAttributeNames={"#status": "status"},
             ExpressionAttributeValues={
-                ":status": "deleted",
+                ":status": self.STATUS_DELETED,
                 ":deleted_at": deleted_at,
             },
             ConditionExpression="attribute_exists(folder_id)",
@@ -939,7 +1436,7 @@ class ObjectStorageService:
         metadata = self.get_file_or_none(file_id)
         if not metadata or metadata.get("user_id") != self.user_id:
             raise HTTPException(status_code=404, detail="File not found")
-        if require_active and metadata.get("status") != "active":
+        if require_active and metadata.get("status") != self.STATUS_ACTIVE:
             raise HTTPException(status_code=400, detail="File is not active")
         return metadata
 
@@ -947,7 +1444,7 @@ class ObjectStorageService:
         metadata = self.get_folder_or_none(folder_id)
         if not metadata or metadata.get("user_id") != self.user_id:
             raise HTTPException(status_code=404, detail="Folder not found")
-        if require_active and metadata.get("status") != "active":
+        if require_active and metadata.get("status") != self.STATUS_ACTIVE:
             raise HTTPException(status_code=400, detail="Folder is not active")
         return metadata
 
@@ -1009,7 +1506,7 @@ class ObjectStorageService:
                 ConditionExpression="attribute_exists(folder_id)",
             )
 
-            if folder.get("status") != "deleted" or next_count != 0:
+            if folder.get("status") != self.STATUS_DELETED or next_count != 0:
                 return
 
             folder["parent_folder_id"] = normalized_parent_folder_id
@@ -1042,7 +1539,7 @@ class ObjectStorageService:
                 folder.get("folder_name", ""),
                 ignore_folder_id=folder["folder_id"],
             )
-            if folder.get("status") == "active":
+            if folder.get("status") == self.STATUS_ACTIVE:
                 continue
             self.folder_table.update_item(
                 Key={"folder_id": folder["folder_id"]},
@@ -1050,7 +1547,7 @@ class ObjectStorageService:
                 ExpressionAttributeNames={"#status": "status"},
                 ExpressionAttributeValues={
                     ":folder_name": restored_folder_name,
-                    ":status": "active",
+                    ":status": self.STATUS_ACTIVE,
                     ":deleted_at": None,
                 },
                 ConditionExpression="attribute_exists(folder_id)",
@@ -1094,6 +1591,36 @@ class ObjectStorageService:
 
         return candidate
 
+    def build_moved_file_name(self, parent_folder_id: str | None, requested_name: str):
+        if not self.has_active_file_with_name(parent_folder_id, requested_name):
+            return requested_name
+
+        stem = PurePosixPath(requested_name).stem or requested_name
+        suffix = self.get_file_extension(requested_name)
+        candidate = f"{stem}_moved{suffix}"
+        copy_number = 2
+
+        while self.has_active_file_with_name(parent_folder_id, candidate):
+            candidate = f"{stem}_moved_{copy_number}{suffix}"
+            copy_number += 1
+
+        return candidate
+
+    def build_move_root_file_name(self, parent_folder_id: str | None, requested_name: str):
+        if not self.has_active_file_with_name(parent_folder_id, requested_name):
+            return requested_name
+
+        stem = PurePosixPath(requested_name).stem or requested_name
+        suffix = self.get_file_extension(requested_name)
+        candidate = f"{stem}_move{suffix}"
+        copy_number = 2
+
+        while self.has_active_file_with_name(parent_folder_id, candidate):
+            candidate = f"{stem}_move_{copy_number}{suffix}"
+            copy_number += 1
+
+        return candidate
+
     def build_restored_file_name(self, parent_folder_id: str | None, requested_name: str, ignore_file_id: str | None = None):
         if not self.has_active_file_with_name(parent_folder_id, requested_name, ignore_file_id=ignore_file_id):
             return requested_name
@@ -1118,6 +1645,19 @@ class ObjectStorageService:
 
         while self.has_active_folder_with_name(parent_folder_id, candidate, ignore_folder_id=ignore_folder_id):
             candidate = f"{requested_name}_restored_{copy_number}"
+            copy_number += 1
+
+        return candidate
+
+    def build_move_root_folder_name(self, parent_folder_id: str | None, requested_name: str):
+        if not self.has_active_folder_with_name(parent_folder_id, requested_name):
+            return requested_name
+
+        candidate = f"{requested_name}_move"
+        copy_number = 2
+
+        while self.has_active_folder_with_name(parent_folder_id, candidate):
+            candidate = f"{requested_name}_move_{copy_number}"
             copy_number += 1
 
         return candidate
@@ -1150,6 +1690,32 @@ class ObjectStorageService:
             for item in items
         )
 
+    def find_folder_by_name(
+        self,
+        parent_folder_id: str | None,
+        folder_name: str,
+        *,
+        statuses: set[str],
+        ignore_folder_id: str | None = None,
+    ):
+        items = self.query_items_by_parent(
+            table=self.folder_table,
+            parent_folder_id=parent_folder_id,
+        )
+        for item in sorted(items, key=lambda value: ((value.get("created_at") or ""), value.get("folder_id") or "")):
+            if item.get("user_id") != self.user_id:
+                continue
+            if item.get("folder_id") == ignore_folder_id:
+                continue
+            if not self.same_parent_folder(self.from_storage_parent_folder_id(item.get("parent_folder_id")), parent_folder_id):
+                continue
+            if item.get("folder_name") != folder_name:
+                continue
+            if item.get("status") not in statuses:
+                continue
+            return item
+        return None
+
     def query_items_by_parent(self, table, parent_folder_id: str | None):
         if parent_folder_id is None:
             return self.scan_table(
@@ -1158,11 +1724,19 @@ class ObjectStorageService:
             )
 
         try:
-            response = table.query(
-                IndexName=self.PARENT_FOLDER_INDEX,
-                KeyConditionExpression=Key("parent_folder_id").eq(self.to_storage_parent_folder_id(parent_folder_id)),
-            )
-            return response.get("Items", [])
+            query_kwargs = {
+                "IndexName": self.PARENT_FOLDER_INDEX,
+                "KeyConditionExpression": Key("parent_folder_id").eq(self.to_storage_parent_folder_id(parent_folder_id)),
+            }
+            items = []
+            while True:
+                response = table.query(**query_kwargs)
+                items.extend(response.get("Items", []))
+                last_evaluated_key = response.get("LastEvaluatedKey")
+                if not last_evaluated_key:
+                    break
+                query_kwargs["ExclusiveStartKey"] = last_evaluated_key
+            return items
         except ClientError as exc:
             error_code = exc.response.get("Error", {}).get("Code")
             if error_code not in {"ResourceNotFoundException", "ValidationException"}:
@@ -1172,6 +1746,37 @@ class ObjectStorageService:
             table,
             self.build_parent_folder_filter(parent_folder_id),
         )
+
+    def get_entry_for_move(self, entry_id: str):
+        file_metadata = self.get_file_or_none(entry_id)
+        if file_metadata and file_metadata.get("user_id") == self.user_id:
+            if file_metadata.get("status") not in {self.STATUS_ACTIVE, self.STATUS_DELETED, self.STATUS_MOVED}:
+                raise HTTPException(status_code=400, detail="File cannot be moved")
+            return file_metadata, "file"
+
+        folder_metadata = self.get_folder_or_none(entry_id)
+        if folder_metadata and folder_metadata.get("user_id") == self.user_id:
+            if folder_metadata.get("status") not in {self.STATUS_ACTIVE, self.STATUS_DELETED, self.STATUS_MOVED}:
+                raise HTTPException(status_code=400, detail="Folder cannot be moved")
+            return folder_metadata, "folder"
+
+        raise HTTPException(status_code=404, detail="Move source not found")
+
+    def ensure_destination_is_not_inside_source(self, source_folder_id: str, destination_folder_id: str | None):
+        current_folder_id = destination_folder_id
+        while current_folder_id:
+            if current_folder_id == source_folder_id:
+                raise HTTPException(status_code=400, detail="Cannot move a folder into itself or one of its descendants")
+            folder = self.get_folder(current_folder_id, require_active=False)
+            current_folder_id = self.from_storage_parent_folder_id(folder.get("parent_folder_id"))
+
+    def normalize_move_mode(self, raw_mode: str | None):
+        normalized_mode = str(raw_mode or "").strip().lower()
+        if normalized_mode in {"", self.MOVE_MODE_MERGE}:
+            return self.MOVE_MODE_MERGE
+        if normalized_mode == self.MOVE_MODE_AVOID_CONFLICT:
+            return self.MOVE_MODE_AVOID_CONFLICT
+        raise HTTPException(status_code=400, detail="Move mode is invalid")
 
     @classmethod
     def to_storage_parent_folder_id(cls, parent_folder_id: str | None):

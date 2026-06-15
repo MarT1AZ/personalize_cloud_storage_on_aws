@@ -1,0 +1,73 @@
+Move Feature Test Material
+
+1. Move active file to empty folder
+- Source: root/file1
+- Target: root/fA
+- Expect: new file created in fA, old file purged, file visible in fA
+
+2. Move deleted file to empty folder
+- Source: root/file1 (deleted)
+- Target: root/fA
+- Expect: new deleted file created in fA, old file purged, file stays hidden from normal view and remains part of trash behavior
+
+3. Move active file into folder with same active name
+- Source: root/file1.txt
+- Target already has: fA/file1.txt
+- Merge mode expect: file1_moved.txt
+- Avoid-conflict mode expect: root file renamed with _move
+
+4. Move active file into folder with same base name but different extension
+- Source: root/file1.py
+- Target already has: fA/file1.txt
+- Expect: no conflict, keep file1.py
+
+5. Move folder to empty folder
+- Source: root/f1
+- Target: root/fA
+- Expect: full subtree recreated under fA/f1, source purged after copy
+
+6. Move folder with nested folders and files
+- Source path example: f1/f2/file1
+- Target: root/fA
+- Expect: DFS copy works, then purge source, final path becomes fA/f1/f2/file1
+
+7. Move folder into destination that already has same active folder
+- Source: root/f1
+- Target already has: root/fA/f1
+- Merge mode expect: merge into existing f1
+- Avoid-conflict mode expect: create f1_move
+
+8. Move folder where destination has same deleted folder
+- Source: root/f1
+- Target already has: root/fA/f1 (deleted)
+- Expect: deleted target folder revived to active and reused
+
+9. Folder conflict chain
+- Destination already has: f1, f1_move
+- Action: move f1 with avoid-conflict mode
+- Expect: create f1_move_2
+
+10. File conflict chain
+- Destination already has: file1, file1_moved
+- Action: move file1
+- Expect: create file1_moved_2
+
+11. Move folder into itself
+- Source: root/f1
+- Target: root/f1
+- Expect: blocked
+
+12. Move folder into its child
+- Source: root/f1
+- Target: root/f1/f2
+- Expect: blocked
+
+13. Move file or folder to same parent
+- Source is already inside target folder
+- Expect: blocked
+
+14. Fail during copy midway, then resume
+- Expect: already moved entries skipped, remaining entries continue, no duplicate copies
+
+15. Fail after copy before purge completes, then resume
+- Expect: purge resumes from same source root, moved entries are not copied again

@@ -29,6 +29,12 @@ class DevHardDeleteRequest(BaseModel):
     folder_id: str = ""
 
 
+class DevMoveRequest(BaseModel):
+    source_id: str = ""
+    destination_folder_id: str = ""
+    mode: str = "merge"
+
+
 class UploadInitRequest(BaseModel):
     file_name: str
     file_size: int
@@ -179,12 +185,31 @@ def get_dev_deletion_state(
     return storage_service.get_dev_deletion_state()
 
 
+@app.get("/api/dev/move-state")
+def get_dev_move_state(
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.get_dev_move_state()
+
+
 @app.post("/api/dev/hard-delete")
 def dev_hard_delete(
     request: DevHardDeleteRequest,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
     return storage_service.dev_hard_delete_folder(request.folder_id)
+
+
+@app.post("/api/dev/move")
+def dev_move(
+    request: DevMoveRequest,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.dev_move_entry(
+        source_id=request.source_id,
+        destination_folder_id=request.destination_folder_id,
+        mode=request.mode,
+    )
 
 
 @app.delete("/api/delete")
