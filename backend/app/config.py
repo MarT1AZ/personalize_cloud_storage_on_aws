@@ -34,6 +34,7 @@ class Settings:
     file_metadata_table: str
     folder_metadata_table: str
     dev_log_table: str
+    dev_operation_batch_limit: int
 
 
 def build_settings():
@@ -50,6 +51,10 @@ def build_settings():
     file_metadata_table = os.getenv("FILE_METADATA_TABLE", "file-meta-data").strip() or "file-meta-data"
     folder_metadata_table = os.getenv("FOLDER_METADATA_TABLE", "folder-meta-data").strip() or "folder-meta-data"
     dev_log_table = os.getenv("DEV_LOG_TABLE", "dev_log").strip() or "dev_log"
+    try:
+        dev_operation_batch_limit = max(int(os.getenv("DEV_OPERATION_BATCH_LIMIT", "100").strip() or "100"), 1)
+    except ValueError:
+        dev_operation_batch_limit = 100
 
     return Settings(
         s3_bucket=s3_bucket,
@@ -58,6 +63,7 @@ def build_settings():
         file_metadata_table=file_metadata_table,
         folder_metadata_table=folder_metadata_table,
         dev_log_table=dev_log_table,
+        dev_operation_batch_limit=dev_operation_batch_limit,
     )
 
 

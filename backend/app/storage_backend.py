@@ -64,6 +64,7 @@ def get_storage_service(current_user: UserProfile = Depends(get_authenticated_us
         file_metadata_table=settings.file_metadata_table,
         folder_metadata_table=settings.folder_metadata_table,
         dev_log_table=settings.dev_log_table,
+        dev_operation_batch_limit=settings.dev_operation_batch_limit,
     )
 
 

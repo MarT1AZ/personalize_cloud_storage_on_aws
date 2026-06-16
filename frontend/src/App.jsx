@@ -17,6 +17,34 @@ function displayPath(path) {
   return path.startsWith('/') ? path : `/${path}`;
 }
 
+function ensureFolderPath(path) {
+  const normalizedPath = displayPath(path || '/');
+  return normalizedPath.endsWith('/') ? normalizedPath : `${normalizedPath}/`;
+}
+
+function buildParentPathFromItem(item) {
+  const itemPath = String(item?.path || '').trim();
+  if (!itemPath) {
+    return '/';
+  }
+
+  if (item?.kind === 'folder') {
+    const normalizedPath = ensureFolderPath(itemPath);
+    const trimmed = normalizedPath.replace(/\/$/, '');
+    const lastSlashIndex = trimmed.lastIndexOf('/');
+    if (lastSlashIndex <= 0) {
+      return '/';
+    }
+    return `${trimmed.slice(0, lastSlashIndex)}/`;
+  }
+
+  const lastSlashIndex = itemPath.lastIndexOf('/');
+  if (lastSlashIndex <= 0) {
+    return '/';
+  }
+  return `${itemPath.slice(0, lastSlashIndex + 1)}`;
+}
+
 function buildFolderPreview(currentPath, rawName) {
   const normalizedName = normalizeKey(rawName).replace(/\/+$/, '');
   if (!normalizedName) {
@@ -247,6 +275,7 @@ export default function App() {
   const [devMoveSourceId, setDevMoveSourceId] = useState('');
   const [devMoveSourceLabel, setDevMoveSourceLabel] = useState('');
   const [devMoveSourceKind, setDevMoveSourceKind] = useState('');
+  const [devMoveSourceParentPath, setDevMoveSourceParentPath] = useState('/');
   const [devMoveDestinationId, setDevMoveDestinationId] = useState('');
   const [devMoveDestinationLabel, setDevMoveDestinationLabel] = useState('');
   const [devMoving, setDevMoving] = useState(false);
@@ -334,6 +363,7 @@ export default function App() {
     setDevMoveSourceId('');
     setDevMoveSourceLabel('');
     setDevMoveSourceKind('');
+    setDevMoveSourceParentPath('/');
     setDevMoveDestinationId('');
     setDevMoveDestinationLabel('');
     setDevMoving(false);
@@ -512,6 +542,33 @@ export default function App() {
     window.addEventListener('pointerdown', handlePointerDown);
     return () => window.removeEventListener('pointerdown', handlePointerDown);
   }, [actionMenuKey]);
+
+  useEffect(() => {
+    if (!devMoveMode || !devMoveSourceId || !devMoveDestinationId) {
+      return;
+    }
+
+    const selectedDestination = folders.find((item) => normalizeId(item.file_id || item.folder_id) === normalizeId(devMoveDestinationId));
+    if (!selectedDestination) {
+      return;
+    }
+
+    if (!getMoveDestinationBlockReason(selectedDestination)) {
+      return;
+    }
+
+    setDevMoveDestinationId('');
+    setDevMoveDestinationLabel('');
+  }, [
+    currentPath,
+    devMoveDestinationId,
+    devMoveMode,
+    devMoveSourceId,
+    devMoveSourceKind,
+    devMoveSourceLabel,
+    devMoveSourceParentPath,
+    folders,
+  ]);
 
   async function handleLogin(event) {
     event.preventDefault();
@@ -807,6 +864,7 @@ export default function App() {
         setDevMoveSourceId('');
         setDevMoveSourceLabel('');
         setDevMoveSourceKind('');
+        setDevMoveSourceParentPath('/');
         setDevMoveDestinationId('');
         setDevMoveDestinationLabel('');
       }
@@ -821,6 +879,11 @@ export default function App() {
     setDevMoveSourceId(sourceId);
     setDevMoveSourceLabel(item?.path || item?.name || sourceId);
     setDevMoveSourceKind(item?.kind || '');
+    setDevMoveSourceParentPath(buildParentPathFromItem(item));
+    if (normalizeId(devMoveDestinationId) === sourceId) {
+      setDevMoveDestinationId('');
+      setDevMoveDestinationLabel('');
+    }
     setSuccess(`Selected ${item?.path || item?.name || sourceId} as move source.`);
     setError('');
   }
@@ -840,6 +903,63 @@ export default function App() {
     setDevMoveDestinationLabel(currentPath || '/');
     setSuccess(`Selected ${currentPath || '/'} as move destination.`);
     setError('');
+  }
+
+  function getMoveDestinationBlockReason(folder) {
+    if (!devMoveMode || !devMoveSourceId) {
+      return '';
+    }
+
+    const folderId = normalizeId(folder?.file_id || folder?.folder_id);
+    if (!folderId) {
+      return '';
+    }
+
+    if (folderId === normalizeId(devMoveSourceId)) {
+      return 'Not allowed: source';
+    }
+
+    if (devMoveSourceKind === 'folder') {
+      const sourcePath = ensureFolderPath(devMoveSourceLabel || '/');
+      const destinationPath = ensureFolderPath(folder?.path || '/');
+      if (destinationPath.startsWith(sourcePath)) {
+        return 'Not allowed: inside source';
+      }
+      return '';
+    }
+
+    if (devMoveSourceKind === 'file') {
+      const destinationPath = ensureFolderPath(folder?.path || '/');
+      if (destinationPath === ensureFolderPath(devMoveSourceParentPath || '/')) {
+        return 'Not allowed: same folder';
+      }
+    }
+
+    return '';
+  }
+
+  function getCurrentFolderMoveBlockReason() {
+    if (!devMoveMode || !devMoveSourceId) {
+      return '';
+    }
+
+    if (devMoveSourceKind === 'folder') {
+      if (normalizeId(currentFolderId) === normalizeId(devMoveSourceId)) {
+        return 'Not allowed: source';
+      }
+      const sourcePath = ensureFolderPath(devMoveSourceLabel || '/');
+      const destinationPath = ensureFolderPath(currentPath || '/');
+      if (destinationPath.startsWith(sourcePath)) {
+        return 'Not allowed: inside source';
+      }
+      return '';
+    }
+
+    if (devMoveSourceKind === 'file' && ensureFolderPath(currentPath || '/') === ensureFolderPath(devMoveSourceParentPath || '/')) {
+      return 'Not allowed: same folder';
+    }
+
+    return '';
   }
 
   async function handleDevMove(mode, { resume = false } = {}) {
@@ -863,6 +983,7 @@ export default function App() {
       setDevMoveSourceId('');
       setDevMoveSourceLabel('');
       setDevMoveSourceKind('');
+      setDevMoveSourceParentPath('/');
       setDevMoveDestinationId('');
       setDevMoveDestinationLabel('');
       setSuccess(
@@ -1297,6 +1418,7 @@ export default function App() {
                   if (item.kind === 'folder') {
                     const isMoveSource = devMoveMode && normalizeId(devMoveSourceId) === normalizeId(item.file_id);
                     const isMoveDestination = devMoveMode && normalizeId(devMoveDestinationId) === normalizeId(item.file_id);
+                    const moveDestinationBlockReason = getMoveDestinationBlockReason(item);
                     return (
                       <li className={`file-row folder-row${isMoveSource ? ' dev-move-source-row' : ''}${isMoveDestination ? ' dev-move-destination-row' : ''}`} key={item.file_id}>
                         <div className="folder-row-shell">
@@ -1371,9 +1493,10 @@ export default function App() {
                                     selectFolderForDevMoveDestination(item);
                                   }
                                 }}
+                                disabled={!isMoveDestination && !!moveDestinationBlockReason}
                                 type="button"
                               >
-                                {isMoveDestination ? 'Destination' : 'Mark destination'}
+                                {isMoveDestination ? 'Destination' : moveDestinationBlockReason || 'Mark destination'}
                               </button>
                             </div>
                           ) : (
@@ -1659,8 +1782,13 @@ export default function App() {
                   <div className="helper-text">
                     Mark source and destination from the list, or type the ids directly. Source can be a file or folder.
                   </div>
-                  <button className="secondary-button" onClick={useCurrentFolderAsMoveDestination} type="button">
-                    Use current folder as destination
+                  <button
+                    className="secondary-button"
+                    onClick={useCurrentFolderAsMoveDestination}
+                    disabled={!!getCurrentFolderMoveBlockReason()}
+                    type="button"
+                  >
+                    {getCurrentFolderMoveBlockReason() ? `${getCurrentFolderMoveBlockReason()} destination` : 'Use current folder as destination'}
                   </button>
                   {devMoveSourceLabel ? (
                     <div className="dev-tool-status">
