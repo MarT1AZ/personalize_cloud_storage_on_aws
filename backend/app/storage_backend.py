@@ -25,11 +25,11 @@ class ObjectSelectionRequest(BaseModel):
     file_ids: list[str]
 
 
-class DevHardDeleteRequest(BaseModel):
+class PurgeRequest(BaseModel):
     folder_id: str = ""
 
 
-class DevMoveRequest(BaseModel):
+class MoveRequest(BaseModel):
     source_id: str = ""
     destination_folder_id: str = ""
     mode: str = "merge"
@@ -63,8 +63,9 @@ def get_storage_service(current_user: UserProfile = Depends(get_authenticated_us
         user_id=current_user.username,
         file_metadata_table=settings.file_metadata_table,
         folder_metadata_table=settings.folder_metadata_table,
-        dev_log_table=settings.dev_log_table,
-        dev_operation_batch_limit=settings.dev_operation_batch_limit,
+        move_log_table=settings.move_log_table,
+        purge_log_table=settings.purge_log_table,
+        operation_batch_limit=settings.operation_batch_limit,
     )
 
 
@@ -179,34 +180,34 @@ def delete_trash(
     return storage_service.permanently_delete_objects(request.file_ids)
 
 
-@app.get("/api/dev/deletion-state")
-def get_dev_deletion_state(
+@app.get("/api/purge/state")
+def get_purge_state(
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.get_dev_deletion_state()
+    return storage_service.get_purge_state()
 
 
-@app.get("/api/dev/move-state")
-def get_dev_move_state(
+@app.get("/api/move/state")
+def get_move_state(
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.get_dev_move_state()
+    return storage_service.get_move_state()
 
 
-@app.post("/api/dev/hard-delete")
-def dev_hard_delete(
-    request: DevHardDeleteRequest,
+@app.post("/api/purge")
+def purge_folder(
+    request: PurgeRequest,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.dev_hard_delete_folder(request.folder_id)
+    return storage_service.purge_folder(request.folder_id)
 
 
-@app.post("/api/dev/move")
-def dev_move(
-    request: DevMoveRequest,
+@app.post("/api/move")
+def move_entry(
+    request: MoveRequest,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.dev_move_entry(
+    return storage_service.move_entry(
         source_id=request.source_id,
         destination_folder_id=request.destination_folder_id,
         mode=request.mode,

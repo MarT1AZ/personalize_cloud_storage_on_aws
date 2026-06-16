@@ -33,8 +33,9 @@ class Settings:
     backend_domain: str
     file_metadata_table: str
     folder_metadata_table: str
-    dev_log_table: str
-    dev_operation_batch_limit: int
+    move_log_table: str
+    purge_log_table: str
+    operation_batch_limit: int
 
 
 def build_settings():
@@ -50,11 +51,15 @@ def build_settings():
     backend_domain = os.getenv("BACKEND_DOMAIN", "http://localhost:8000").strip() or "http://localhost:8000"
     file_metadata_table = os.getenv("FILE_METADATA_TABLE", "file-meta-data").strip() or "file-meta-data"
     folder_metadata_table = os.getenv("FOLDER_METADATA_TABLE", "folder-meta-data").strip() or "folder-meta-data"
-    dev_log_table = os.getenv("DEV_LOG_TABLE", "dev_log").strip() or "dev_log"
+    move_log_table = os.getenv("MOVE_LOG_TABLE", "move_log").strip() or "move_log"
+    purge_log_table = os.getenv("PURGE_LOG_TABLE", "purge_log").strip() or "purge_log"
     try:
-        dev_operation_batch_limit = max(int(os.getenv("DEV_OPERATION_BATCH_LIMIT", "100").strip() or "100"), 1)
+        operation_batch_limit = max(
+            int(os.getenv("OPERATION_BATCH_LIMIT", "100").strip() or "100"),
+            1,
+        )
     except ValueError:
-        dev_operation_batch_limit = 100
+        operation_batch_limit = 100
 
     return Settings(
         s3_bucket=s3_bucket,
@@ -62,8 +67,9 @@ def build_settings():
         backend_domain=backend_domain,
         file_metadata_table=file_metadata_table,
         folder_metadata_table=folder_metadata_table,
-        dev_log_table=dev_log_table,
-        dev_operation_batch_limit=dev_operation_batch_limit,
+        move_log_table=move_log_table,
+        purge_log_table=purge_log_table,
+        operation_batch_limit=operation_batch_limit,
     )
 
 

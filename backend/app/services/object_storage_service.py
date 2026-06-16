@@ -15,14 +15,14 @@ from app.auth_config import auth_settings
 class ObjectStorageService:
     PARENT_FOLDER_INDEX = "parent_folder_id_index"
     ROOT_PARENT_FOLDER_ID = "__root__"
-    DEV_LOG_STATUS_RUNNING = "running"
-    DEV_LOG_STATUS_FAILED = "failed"
-    DEV_LOG_STATUS_DONE = "done"
-    DEV_LOG_OPERATION_DELETE = "dev_hard_delete"
-    DEV_LOG_OPERATION_PURGE = "purge"
-    DEV_LOG_OPERATION_MOVE = "move"
-    DEV_LOG_ATTEMPT_INITIAL = "initial"
-    DEV_LOG_ATTEMPT_RESUME = "resume"
+    LOG_STATUS_RUNNING = "running"
+    LOG_STATUS_FAILED = "failed"
+    LOG_STATUS_DONE = "done"
+    LOG_OPERATION_DELETE = "hard_delete"
+    LOG_OPERATION_PURGE = "purge"
+    LOG_OPERATION_MOVE = "move"
+    LOG_ATTEMPT_INITIAL = "initial"
+    LOG_ATTEMPT_RESUME = "resume"
     MOVE_MODE_MERGE = "merge"
     MOVE_MODE_AVOID_CONFLICT = "avoid_conflict"
     STATUS_ACTIVE = "active"
@@ -37,8 +37,9 @@ class ObjectStorageService:
         user_id: str,
         file_metadata_table: str,
         folder_metadata_table: str,
-        dev_log_table: str,
-        dev_operation_batch_limit: int = 100,
+        move_log_table: str,
+        purge_log_table: str,
+        operation_batch_limit: int = 100,
         s3_client=None,
         dynamodb_resource=None,
     ):
@@ -48,8 +49,9 @@ class ObjectStorageService:
         self.dynamodb = dynamodb_resource or boto3.resource("dynamodb")
         self.file_table = self.dynamodb.Table(file_metadata_table)
         self.folder_table = self.dynamodb.Table(folder_metadata_table)
-        self.dev_log_table = self.dynamodb.Table(dev_log_table)
-        self.dev_operation_batch_limit = max(int(dev_operation_batch_limit or 100), 1)
+        self.move_log_table = self.dynamodb.Table(move_log_table)
+        self.purge_log_table = self.dynamodb.Table(purge_log_table)
+        self.operation_batch_limit = max(int(operation_batch_limit or 100), 1)
         self._bucket_region = None
         self._upload_signing_client = None
 
@@ -300,66 +302,66 @@ class ObjectStorageService:
 
         raise HTTPException(status_code=404, detail="Object not found")
 
-    def get_dev_deletion_state(self):
-        metadata = self.get_active_dev_deletion_log()
+    def get_purge_state(self):
+        metadata = self.get_active_purge_log()
         if not metadata:
             return {
-                "dev_deletion": False,
-                "dev_deletion_root_id": "",
-                "dev_deletion_root_parent_id": "",
-                "dev_deletion_phase": "idle",
+                "purge_active": False,
+                "root_id": "",
+                "root_parent_folder_id": "",
+                "phase": "idle",
             }
 
         return {
-            "dev_deletion": metadata.get("status") in {self.DEV_LOG_STATUS_RUNNING, self.DEV_LOG_STATUS_FAILED},
-            "dev_deletion_root_id": self.get_log_root_id(metadata),
-            "dev_deletion_root_parent_id": str(metadata.get("root_parent_folder_id") or "").strip(),
-            "dev_deletion_phase": str(metadata.get("phase") or "idle").strip() or "idle",
-            "dev_deletion_log_id": str(metadata.get("log_id") or "").strip(),
-            "dev_deletion_operation_id": str(metadata.get("operation_id") or "").strip(),
-            "dev_deletion_status": str(metadata.get("status") or "").strip(),
-            "dev_deletion_root_kind": self.get_log_root_kind(metadata),
-            "dev_deletion_preceding_log_id": str(metadata.get("preceding_log_id") or "").strip(),
-            "dev_deletion_is_resumed": bool(metadata.get("is_resumed")),
+            "purge_active": metadata.get("status") in {self.LOG_STATUS_RUNNING, self.LOG_STATUS_FAILED},
+            "root_id": self.get_log_root_id(metadata),
+            "root_parent_folder_id": str(metadata.get("root_parent_folder_id") or "").strip(),
+            "phase": str(metadata.get("phase") or "idle").strip() or "idle",
+            "log_id": str(metadata.get("log_id") or "").strip(),
+            "operation_id": str(metadata.get("operation_id") or "").strip(),
+            "status": str(metadata.get("status") or "").strip(),
+            "root_kind": self.get_log_root_kind(metadata),
+            "preceding_log_id": str(metadata.get("preceding_log_id") or "").strip(),
+            "is_resumed": bool(metadata.get("is_resumed")),
         }
 
-    def get_dev_move_state(self):
-        metadata = self.get_active_dev_move_log()
+    def get_move_state(self):
+        metadata = self.get_active_move_log()
         if not metadata:
             return {
-                "dev_move": False,
-                "dev_move_log_id": "",
-                "dev_move_operation_id": "",
-                "dev_move_source_id": "",
-                "dev_move_destination_folder_id": "",
-                "dev_move_phase": "idle",
-                "dev_move_mode": "",
-                "dev_move_source_kind": "",
+                "move_active": False,
+                "log_id": "",
+                "operation_id": "",
+                "source_id": "",
+                "destination_folder_id": "",
+                "phase": "idle",
+                "mode": "",
+                "source_kind": "",
             }
 
         return {
-            "dev_move": metadata.get("status") in {self.DEV_LOG_STATUS_RUNNING, self.DEV_LOG_STATUS_FAILED},
-            "dev_move_log_id": str(metadata.get("log_id") or "").strip(),
-            "dev_move_operation_id": str(metadata.get("operation_id") or "").strip(),
-            "dev_move_source_id": str(metadata.get("source_entry_id") or "").strip(),
-            "dev_move_destination_folder_id": str(metadata.get("destination_folder_id") or "").strip(),
-            "dev_move_phase": str(metadata.get("phase") or "idle").strip() or "idle",
-            "dev_move_mode": str(metadata.get("move_mode") or "").strip(),
-            "dev_move_source_kind": str(metadata.get("source_entry_kind") or "").strip(),
-            "dev_move_preceding_log_id": str(metadata.get("preceding_log_id") or "").strip(),
-            "dev_move_is_resumed": bool(metadata.get("is_resumed")),
+            "move_active": metadata.get("status") in {self.LOG_STATUS_RUNNING, self.LOG_STATUS_FAILED},
+            "log_id": str(metadata.get("log_id") or "").strip(),
+            "operation_id": str(metadata.get("operation_id") or "").strip(),
+            "source_id": str(metadata.get("source_entry_id") or "").strip(),
+            "destination_folder_id": str(metadata.get("destination_folder_id") or "").strip(),
+            "phase": str(metadata.get("phase") or "idle").strip() or "idle",
+            "mode": str(metadata.get("move_mode") or "").strip(),
+            "source_kind": str(metadata.get("source_entry_kind") or "").strip(),
+            "preceding_log_id": str(metadata.get("preceding_log_id") or "").strip(),
+            "is_resumed": bool(metadata.get("is_resumed")),
         }
 
-    def dev_move_entry(self, source_id: str = "", destination_folder_id: str = "", mode: str = MOVE_MODE_MERGE):
-        active_delete_log = self.get_active_dev_deletion_log()
+    def move_entry(self, source_id: str = "", destination_folder_id: str = "", mode: str = MOVE_MODE_MERGE):
+        active_delete_log = self.get_active_purge_log()
         if active_delete_log:
             active_root_id = self.get_log_root_id(active_delete_log)
             raise HTTPException(
                 status_code=409,
-                detail=f"A dev deletion is already in progress for folder '{active_root_id}'. Finish that purge before moving.",
+                detail=f"A purge is already in progress for folder '{active_root_id}'. Finish that purge before moving.",
             )
 
-        active_move_log = self.get_active_dev_move_log()
+        active_move_log = self.get_active_move_log()
         if active_move_log:
             normalized_source_id = self.normalize_id(source_id)
             active_source_id = self.normalize_id(active_move_log.get("source_entry_id"))
@@ -368,7 +370,7 @@ class ObjectStorageService:
                     status_code=409,
                     detail=f"A move is already in progress for entry '{active_source_id}'. Resume that move first.",
                 )
-            return self.resume_dev_move(active_move_log)
+            return self.resume_move(active_move_log)
 
         normalized_source_id = self.normalize_id(source_id)
         if not normalized_source_id:
@@ -391,7 +393,7 @@ class ObjectStorageService:
             if normalized_destination_id and normalized_destination_id == source_parent_id:
                 raise HTTPException(status_code=400, detail="Source is already inside that folder")
 
-        log_metadata = self.create_dev_move_log(
+        log_metadata = self.create_move_log(
             operation_id=self.generate_short_id(),
             source_id=normalized_source_id,
             source_kind=source_kind,
@@ -399,16 +401,16 @@ class ObjectStorageService:
             destination_folder_id=normalized_destination_id,
             mode=normalized_mode,
         )
-        return self.run_dev_move(log_metadata, resumed=False)
+        return self.run_move(log_metadata, resumed=False)
 
-    def resume_dev_move(self, log_metadata=None):
-        log_metadata = log_metadata or self.get_active_dev_move_log()
+    def resume_move(self, log_metadata=None):
+        log_metadata = log_metadata or self.get_active_move_log()
         if not log_metadata:
             raise HTTPException(status_code=400, detail="No move is in progress")
-        resume_log = self.create_resume_dev_move_log(log_metadata)
-        return self.run_dev_move(resume_log, resumed=True)
+        resume_log = self.create_resume_move_log(log_metadata)
+        return self.run_move(resume_log, resumed=True)
 
-    def run_dev_move(self, log_metadata, resumed: bool):
+    def run_move(self, log_metadata, resumed: bool):
         source_id = self.normalize_id(log_metadata.get("source_entry_id"))
         source_kind = str(log_metadata.get("source_entry_kind") or "").strip()
         destination_folder_id = self.normalize_id(log_metadata.get("destination_folder_id")) or None
@@ -428,9 +430,9 @@ class ObjectStorageService:
             batch_limit = self.get_log_batch_limit(log_metadata)
             budget = self.create_processing_budget(batch_limit)
             if phase == "copying":
-                self.update_dev_move_log(
+                self.update_move_log(
                     log_metadata["log_id"],
-                    status=self.DEV_LOG_STATUS_RUNNING,
+                    status=self.LOG_STATUS_RUNNING,
                     phase="copying",
                     last_error="",
                 )
@@ -457,9 +459,9 @@ class ObjectStorageService:
                 phase = "completed" if budget["complete"] else "copying"
 
                 if not budget["complete"]:
-                    self.update_dev_move_log(
+                    self.update_move_log(
                         log_metadata["log_id"],
-                        status=self.DEV_LOG_STATUS_RUNNING,
+                        status=self.LOG_STATUS_RUNNING,
                         phase="copying",
                         last_error="",
                         moved_files_count=summary["copied_files"],
@@ -480,9 +482,9 @@ class ObjectStorageService:
                         "processed_this_run": budget["processed"],
                     }
 
-            self.update_dev_move_log(
+            self.update_move_log(
                 log_metadata["log_id"],
-                status=self.DEV_LOG_STATUS_DONE,
+                status=self.LOG_STATUS_DONE,
                 phase="completed",
                 last_error="",
                 moved_files_count=summary["copied_files"],
@@ -492,9 +494,9 @@ class ObjectStorageService:
             )
         except Exception as exc:
             next_phase = phase if phase == "completed" else "copying"
-            self.update_dev_move_log(
+            self.update_move_log(
                 log_metadata["log_id"],
-                status=self.DEV_LOG_STATUS_FAILED,
+                status=self.LOG_STATUS_FAILED,
                 phase=next_phase,
                 last_error=str(exc),
                 moved_files_count=summary["copied_files"],
@@ -508,15 +510,15 @@ class ObjectStorageService:
             source_kind=source_kind,
             fallback_root_id=source_id,
         )
-        purge_log = self.create_dev_purge_log(
+        purge_log = self.create_purge_log(
             operation_id=str(log_metadata.get("operation_id") or "").strip(),
             root_id=purge_root_id,
             root_kind=purge_root_kind,
             root_parent_id=source_parent_id,
             preceding_log_id=log_metadata["log_id"],
-            trigger_operation=self.DEV_LOG_OPERATION_MOVE,
+            trigger_operation=self.LOG_OPERATION_MOVE,
         )
-        purge_result = self.run_dev_purge(purge_log, resumed=False)
+        purge_result = self.run_purge(purge_log, resumed=False)
 
         return {
             "source_entry_id": source_id,
@@ -535,27 +537,27 @@ class ObjectStorageService:
             "processed_this_run": budget["processed"],
         }
 
-    def dev_hard_delete_folder(self, folder_id: str = ""):
+    def purge_folder(self, folder_id: str = ""):
         normalized_folder_id = self.normalize_id(folder_id)
-        active_log = self.get_active_dev_deletion_log()
+        active_log = self.get_active_purge_log()
         active_root_id = self.get_log_root_id(active_log) if active_log else ""
 
         if active_log:
             if normalized_folder_id and active_root_id and normalized_folder_id != active_root_id:
                 raise HTTPException(
                     status_code=409,
-                    detail=f"A dev deletion is already in progress for folder '{active_root_id}'. Resume that purge first.",
+                    detail=f"A purge is already in progress for folder '{active_root_id}'. Resume that purge first.",
                 )
             if not active_root_id:
-                raise HTTPException(status_code=409, detail="Dev deletion is marked active but has no root id")
-            return self.resume_dev_hard_delete(active_log)
+                raise HTTPException(status_code=409, detail="Purge is marked active but has no root id")
+            return self.resume_purge(active_log)
 
         if not normalized_folder_id:
             raise HTTPException(status_code=400, detail="Folder id is required")
 
         root_metadata = self.get_folder(normalized_folder_id, require_active=False)
         root_parent_id = self.from_storage_parent_folder_id(root_metadata.get("parent_folder_id"))
-        log_metadata = self.create_dev_purge_log(
+        log_metadata = self.create_purge_log(
             operation_id=self.generate_short_id(),
             root_id=normalized_folder_id,
             root_kind="folder",
@@ -563,16 +565,16 @@ class ObjectStorageService:
             preceding_log_id="",
             trigger_operation="manual_purge",
         )
-        return self.run_dev_purge(log_metadata, resumed=False)
+        return self.run_purge(log_metadata, resumed=False)
 
-    def resume_dev_hard_delete(self, log_metadata=None):
-        log_metadata = log_metadata or self.get_active_dev_deletion_log()
+    def resume_purge(self, log_metadata=None):
+        log_metadata = log_metadata or self.get_active_purge_log()
         if not log_metadata:
-            raise HTTPException(status_code=400, detail="No dev deletion is in progress")
-        resume_log = self.create_resume_dev_purge_log(log_metadata)
-        return self.run_dev_purge(resume_log, resumed=True)
+            raise HTTPException(status_code=400, detail="No purge is in progress")
+        resume_log = self.create_resume_purge_log(log_metadata)
+        return self.run_purge(resume_log, resumed=True)
 
-    def run_dev_purge(self, log_metadata, resumed: bool):
+    def run_purge(self, log_metadata, resumed: bool):
         root_id = self.get_log_root_id(log_metadata)
         root_kind = self.get_log_root_kind(log_metadata)
         root_parent_id = self.normalize_id(log_metadata.get("root_parent_folder_id")) or None
@@ -589,19 +591,19 @@ class ObjectStorageService:
 
         try:
             phase = str(log_metadata.get("phase") or "deleting").strip() or "deleting"
-            self.update_dev_purge_log(
+            self.update_purge_log(
                 log_metadata["log_id"],
-                status=self.DEV_LOG_STATUS_RUNNING,
+                status=self.LOG_STATUS_RUNNING,
                 phase="deleting",
                 last_error="",
             )
             if root_kind == "file":
                 root_metadata = self.get_file_or_none(root_id)
                 if root_metadata and root_metadata.get("user_id") == self.user_id:
-                    if not self.dev_delete_file(root_metadata, root_id, budget):
-                        self.update_dev_purge_log(
+                    if not self.purge_file_entry(root_metadata, root_id, budget):
+                        self.update_purge_log(
                             log_metadata["log_id"],
-                            status=self.DEV_LOG_STATUS_RUNNING,
+                            status=self.LOG_STATUS_RUNNING,
                             phase="deleting",
                             last_error="",
                             deleted_files_count=summary["deleted_files"],
@@ -624,11 +626,11 @@ class ObjectStorageService:
             else:
                 root_metadata = self.get_folder_or_none(root_id)
                 if root_metadata and root_metadata.get("user_id") == self.user_id:
-                    complete = self.dev_delete_folder_subtree(root_metadata, root_id, summary, budget)
+                    complete = self.delete_folder_subtree(root_metadata, root_id, summary, budget)
                     if not complete:
-                        self.update_dev_purge_log(
+                        self.update_purge_log(
                             log_metadata["log_id"],
-                            status=self.DEV_LOG_STATUS_RUNNING,
+                            status=self.LOG_STATUS_RUNNING,
                             phase="deleting",
                             last_error="",
                             deleted_files_count=summary["deleted_files"],
@@ -648,7 +650,7 @@ class ObjectStorageService:
                             "processed_this_run": budget["processed"],
                         }
 
-            return self.finalize_dev_purge(
+            return self.finalize_purge(
                 root_id,
                 root_parent_id,
                 root_kind=root_kind,
@@ -657,9 +659,9 @@ class ObjectStorageService:
                 log_metadata=log_metadata,
             )
         except Exception as exc:
-            self.update_dev_purge_log(
+            self.update_purge_log(
                 log_metadata["log_id"],
-                status=self.DEV_LOG_STATUS_FAILED,
+                status=self.LOG_STATUS_FAILED,
                 phase="deleting",
                 last_error=str(exc),
                 deleted_files_count=summary["deleted_files"],
@@ -668,7 +670,7 @@ class ObjectStorageService:
             )
             raise
 
-    def finalize_dev_purge(
+    def finalize_purge(
         self,
         root_id: str,
         root_parent_id: str | None,
@@ -686,9 +688,9 @@ class ObjectStorageService:
         if root_parent_id:
             self.reconcile_folder_children_count_chain(root_parent_id)
 
-        self.update_dev_purge_log(
+        self.update_purge_log(
             log_metadata["log_id"],
-            status=self.DEV_LOG_STATUS_DONE,
+            status=self.LOG_STATUS_DONE,
             phase="completed",
             last_error="",
             deleted_files_count=summary["deleted_files"],
@@ -706,7 +708,7 @@ class ObjectStorageService:
             "phase": "completed",
         }
 
-    def dev_delete_folder_subtree(self, folder_metadata, root_id: str, summary: dict, budget: dict):
+    def delete_folder_subtree(self, folder_metadata, root_id: str, summary: dict, budget: dict):
         normalized_parent_folder_id = self.from_storage_parent_folder_id(folder_metadata.get("parent_folder_id"))
         next_folder_metadata = dict(folder_metadata)
         next_folder_metadata["parent_folder_id"] = normalized_parent_folder_id
@@ -714,11 +716,11 @@ class ObjectStorageService:
         child_folders, child_files = self.list_direct_children(folder_metadata["folder_id"])
 
         for child_folder in child_folders:
-            if not self.dev_delete_folder_subtree(child_folder, root_id, summary, budget):
+            if not self.delete_folder_subtree(child_folder, root_id, summary, budget):
                 return False
 
         for child_file in child_files:
-            if not self.dev_delete_file(child_file, root_id, budget):
+            if not self.purge_file_entry(child_file, root_id, budget):
                 return False
             summary["deleted_files"] += 1
 
@@ -733,7 +735,7 @@ class ObjectStorageService:
         if source_kind == "file":
             source_file = self.get_file_or_none(source_id)
             if source_file and source_file.get("user_id") == self.user_id:
-                if not self.dev_delete_file(source_file, source_id, budget):
+                if not self.purge_file_entry(source_file, source_id, budget):
                     return False
                 summary["purged_files"] += 1
             return True
@@ -744,13 +746,13 @@ class ObjectStorageService:
                 "deleted_files": summary["purged_files"],
                 "deleted_folders": summary["purged_folders"],
             }
-            if not self.dev_delete_folder_subtree(source_folder, source_id, purge_summary, budget):
+            if not self.delete_folder_subtree(source_folder, source_id, purge_summary, budget):
                 return False
             summary["purged_files"] = purge_summary["deleted_files"]
             summary["purged_folders"] = purge_summary["deleted_folders"]
         return True
 
-    def dev_delete_file(self, metadata, root_id: str, budget: dict):
+    def purge_file_entry(self, metadata, root_id: str, budget: dict):
         if not self.consume_processing_budget(budget):
             return False
         self.mark_file_deletion_pending(metadata["file_id"], root_id)
@@ -1077,44 +1079,53 @@ class ObjectStorageService:
             self.hard_delete_folder(folder)
             current_folder_id = parent_folder_id
 
-    def get_active_dev_deletion_log(self):
-        candidates = self.scan_current_dev_logs({self.DEV_LOG_OPERATION_DELETE, self.DEV_LOG_OPERATION_PURGE})
+    def get_active_purge_log(self):
+        candidates = self.scan_current_purge_logs()
         if not candidates:
             return None
 
         candidates.sort(key=lambda item: ((item.get("updated_at") or ""), (item.get("created_at") or "")), reverse=True)
         return candidates[0]
 
-    def get_active_dev_move_log(self):
-        candidates = self.scan_current_dev_logs({self.DEV_LOG_OPERATION_MOVE})
+    def get_active_move_log(self):
+        candidates = self.scan_current_move_logs()
         if not candidates:
             return None
 
         candidates.sort(key=lambda item: ((item.get("updated_at") or ""), (item.get("created_at") or "")), reverse=True)
         return candidates[0]
 
-    def scan_current_dev_logs(self, operation_types: set[str]):
-        operation_filter = None
-        for operation_type in operation_types:
-            current_filter = Attr("operation_type").eq(operation_type)
-            operation_filter = current_filter if operation_filter is None else (operation_filter | current_filter)
-
-        if self.DEV_LOG_OPERATION_DELETE in operation_types:
-            operation_filter = operation_filter | Attr("operation_type").not_exists()
-
+    def scan_current_move_logs(self):
         return self.scan_table(
-            self.dev_log_table,
+            self.move_log_table,
             Attr("user_id").eq(self.user_id)
             & (
-                Attr("status").eq(self.DEV_LOG_STATUS_RUNNING)
-                | Attr("status").eq(self.DEV_LOG_STATUS_FAILED)
+                Attr("status").eq(self.LOG_STATUS_RUNNING)
+                | Attr("status").eq(self.LOG_STATUS_FAILED)
             )
             & (Attr("is_resumed").not_exists() | Attr("is_resumed").eq(False))
-            & operation_filter,
+            & Attr("operation_type").eq(self.LOG_OPERATION_MOVE),
         )
 
-    def create_dev_deletion_log(self, root_id: str, root_parent_id: str | None):
-        return self.create_dev_purge_log(
+    def scan_current_purge_logs(self):
+        return self.scan_table(
+            self.purge_log_table,
+            Attr("user_id").eq(self.user_id)
+            & (
+                Attr("status").eq(self.LOG_STATUS_RUNNING)
+                | Attr("status").eq(self.LOG_STATUS_FAILED)
+            )
+            & (Attr("is_resumed").not_exists() | Attr("is_resumed").eq(False))
+            & (
+                Attr("operation_type").eq(self.LOG_OPERATION_PURGE)
+                | Attr("operation_type").eq(self.LOG_OPERATION_DELETE)
+                | Attr("operation_type").eq("dev_hard_delete")
+                | Attr("operation_type").not_exists()
+            ),
+        )
+
+    def create_deletion_log(self, root_id: str, root_parent_id: str | None):
+        return self.create_purge_log(
             operation_id=self.generate_short_id(),
             root_id=root_id,
             root_kind="folder",
@@ -1123,7 +1134,7 @@ class ObjectStorageService:
             trigger_operation="manual_purge",
         )
 
-    def create_dev_purge_log(
+    def create_purge_log(
         self,
         *,
         operation_id: str,
@@ -1138,8 +1149,8 @@ class ObjectStorageService:
             "log_id": self.generate_short_id(),
             "operation_id": operation_id,
             "user_id": self.user_id,
-            "operation_type": self.DEV_LOG_OPERATION_PURGE,
-            "attempt_type": self.DEV_LOG_ATTEMPT_INITIAL,
+            "operation_type": self.LOG_OPERATION_PURGE,
+            "attempt_type": self.LOG_ATTEMPT_INITIAL,
             "is_resumed": False,
             "preceding_log_id": preceding_log_id,
             "trigger_operation": trigger_operation,
@@ -1147,7 +1158,7 @@ class ObjectStorageService:
             "root_entry_kind": root_kind,
             "root_folder_id": root_id if root_kind == "folder" else "",
             "root_parent_folder_id": root_parent_id or "",
-            "status": self.DEV_LOG_STATUS_RUNNING,
+            "status": self.LOG_STATUS_RUNNING,
             "phase": "deleting",
             "created_at": now,
             "updated_at": now,
@@ -1155,13 +1166,13 @@ class ObjectStorageService:
             "last_error": "",
             "deleted_files_count": 0,
             "deleted_folders_count": 0,
-            "batch_limit": self.dev_operation_batch_limit,
+            "batch_limit": self.operation_batch_limit,
             "processed_this_run": 0,
         }
-        self.dev_log_table.put_item(Item=metadata)
+        self.purge_log_table.put_item(Item=metadata)
         return metadata
 
-    def create_dev_move_log(
+    def create_move_log(
         self,
         *,
         operation_id: str,
@@ -1176,15 +1187,15 @@ class ObjectStorageService:
             "log_id": self.generate_short_id(),
             "operation_id": operation_id,
             "user_id": self.user_id,
-            "operation_type": self.DEV_LOG_OPERATION_MOVE,
-            "attempt_type": self.DEV_LOG_ATTEMPT_INITIAL,
+            "operation_type": self.LOG_OPERATION_MOVE,
+            "attempt_type": self.LOG_ATTEMPT_INITIAL,
             "is_resumed": False,
             "preceding_log_id": "",
             "source_entry_id": source_id,
             "source_entry_kind": source_kind,
             "destination_folder_id": destination_folder_id or "",
             "move_mode": mode,
-            "status": self.DEV_LOG_STATUS_RUNNING,
+            "status": self.LOG_STATUS_RUNNING,
             "phase": "copying",
             "created_at": now,
             "updated_at": now,
@@ -1194,28 +1205,28 @@ class ObjectStorageService:
             "moved_folders_count": 0,
             "purged_files_count": 0,
             "purged_folders_count": 0,
-            "batch_limit": self.dev_operation_batch_limit,
+            "batch_limit": self.operation_batch_limit,
             "processed_this_run": 0,
         }
-        self.dev_log_table.put_item(Item=metadata)
+        self.move_log_table.put_item(Item=metadata)
         return metadata
 
-    def create_resume_dev_move_log(self, previous_log):
+    def create_resume_move_log(self, previous_log):
         self.mark_log_resumed(previous_log["log_id"])
         now = self.now_iso()
         metadata = {
             "log_id": self.generate_short_id(),
             "operation_id": str(previous_log.get("operation_id") or "").strip() or self.generate_short_id(),
             "user_id": self.user_id,
-            "operation_type": self.DEV_LOG_OPERATION_MOVE,
-            "attempt_type": self.DEV_LOG_ATTEMPT_RESUME,
+            "operation_type": self.LOG_OPERATION_MOVE,
+            "attempt_type": self.LOG_ATTEMPT_RESUME,
             "is_resumed": False,
             "preceding_log_id": str(previous_log.get("log_id") or "").strip(),
             "source_entry_id": str(previous_log.get("source_entry_id") or "").strip(),
             "source_entry_kind": str(previous_log.get("source_entry_kind") or "").strip(),
             "destination_folder_id": str(previous_log.get("destination_folder_id") or "").strip(),
             "move_mode": str(previous_log.get("move_mode") or self.MOVE_MODE_MERGE),
-            "status": self.DEV_LOG_STATUS_RUNNING,
+            "status": self.LOG_STATUS_RUNNING,
             "phase": str(previous_log.get("phase") or "copying").strip() or "copying",
             "created_at": now,
             "updated_at": now,
@@ -1228,10 +1239,10 @@ class ObjectStorageService:
             "batch_limit": self.get_log_batch_limit(previous_log),
             "processed_this_run": 0,
         }
-        self.dev_log_table.put_item(Item=metadata)
+        self.move_log_table.put_item(Item=metadata)
         return metadata
 
-    def create_resume_dev_purge_log(self, previous_log):
+    def create_resume_purge_log(self, previous_log):
         self.mark_log_resumed(previous_log["log_id"])
         now = self.now_iso()
         root_id = self.get_log_root_id(previous_log)
@@ -1240,8 +1251,8 @@ class ObjectStorageService:
             "log_id": self.generate_short_id(),
             "operation_id": str(previous_log.get("operation_id") or "").strip() or self.generate_short_id(),
             "user_id": self.user_id,
-            "operation_type": self.DEV_LOG_OPERATION_PURGE,
-            "attempt_type": self.DEV_LOG_ATTEMPT_RESUME,
+            "operation_type": self.LOG_OPERATION_PURGE,
+            "attempt_type": self.LOG_ATTEMPT_RESUME,
             "is_resumed": False,
             "preceding_log_id": str(previous_log.get("log_id") or "").strip(),
             "trigger_operation": str(previous_log.get("trigger_operation") or "").strip(),
@@ -1249,7 +1260,7 @@ class ObjectStorageService:
             "root_entry_kind": root_kind,
             "root_folder_id": root_id if root_kind == "folder" else "",
             "root_parent_folder_id": str(previous_log.get("root_parent_folder_id") or "").strip(),
-            "status": self.DEV_LOG_STATUS_RUNNING,
+            "status": self.LOG_STATUS_RUNNING,
             "phase": str(previous_log.get("phase") or "deleting").strip() or "deleting",
             "created_at": now,
             "updated_at": now,
@@ -1260,10 +1271,10 @@ class ObjectStorageService:
             "batch_limit": self.get_log_batch_limit(previous_log),
             "processed_this_run": 0,
         }
-        self.dev_log_table.put_item(Item=metadata)
+        self.purge_log_table.put_item(Item=metadata)
         return metadata
 
-    def update_dev_deletion_log(
+    def update_deletion_log(
         self,
         log_id: str,
         *,
@@ -1274,7 +1285,7 @@ class ObjectStorageService:
         deleted_folders_count: int | None = None,
         completed_at: str | None = None,
     ):
-        return self.update_dev_purge_log(
+        return self.update_purge_log(
             log_id,
             status=status,
             phase=phase,
@@ -1284,7 +1295,7 @@ class ObjectStorageService:
             completed_at=completed_at,
         )
 
-    def update_dev_purge_log(
+    def update_purge_log(
         self,
         log_id: str,
         *,
@@ -1296,9 +1307,9 @@ class ObjectStorageService:
         processed_this_run: int | None = None,
         completed_at: str | None = None,
     ):
-        metadata = self.get_dev_log_or_none(log_id)
+        metadata = self.get_purge_log_or_none(log_id)
         if not metadata or metadata.get("user_id") != self.user_id:
-            raise HTTPException(status_code=404, detail="Dev deletion log not found")
+            raise HTTPException(status_code=404, detail="Purge log not found")
 
         if status is not None:
             metadata["status"] = status
@@ -1316,10 +1327,10 @@ class ObjectStorageService:
             metadata["completed_at"] = completed_at
 
         metadata["updated_at"] = self.now_iso()
-        self.dev_log_table.put_item(Item=metadata)
+        self.purge_log_table.put_item(Item=metadata)
         return metadata
 
-    def update_dev_move_log(
+    def update_move_log(
         self,
         log_id: str,
         *,
@@ -1333,7 +1344,7 @@ class ObjectStorageService:
         processed_this_run: int | None = None,
         completed_at: str | None = None,
     ):
-        metadata = self.get_dev_log_or_none(log_id)
+        metadata = self.get_move_log_or_none(log_id)
         if not metadata or metadata.get("user_id") != self.user_id:
             raise HTTPException(status_code=404, detail="Move log not found")
 
@@ -1357,23 +1368,40 @@ class ObjectStorageService:
             metadata["completed_at"] = completed_at
 
         metadata["updated_at"] = self.now_iso()
-        self.dev_log_table.put_item(Item=metadata)
+        self.move_log_table.put_item(Item=metadata)
         return metadata
 
-    def get_dev_log_or_none(self, log_id: str):
+    def get_log_or_none(self, log_id: str):
+        metadata = self.get_move_log_or_none(log_id)
+        if metadata:
+            return metadata
+        return self.get_purge_log_or_none(log_id)
+
+    def get_move_log_or_none(self, log_id: str):
         if not log_id:
             return None
 
-        response = self.dev_log_table.get_item(Key={"log_id": log_id})
+        response = self.move_log_table.get_item(Key={"log_id": log_id})
+        return response.get("Item")
+
+    def get_purge_log_or_none(self, log_id: str):
+        if not log_id:
+            return None
+
+        response = self.purge_log_table.get_item(Key={"log_id": log_id})
         return response.get("Item")
 
     def mark_log_resumed(self, log_id: str):
-        metadata = self.get_dev_log_or_none(log_id)
+        metadata = self.get_move_log_or_none(log_id)
+        target_table = self.move_log_table
+        if not metadata:
+            metadata = self.get_purge_log_or_none(log_id)
+            target_table = self.purge_log_table
         if not metadata or metadata.get("user_id") != self.user_id:
             return
         metadata["is_resumed"] = True
         metadata["updated_at"] = self.now_iso()
-        self.dev_log_table.put_item(Item=metadata)
+        target_table.put_item(Item=metadata)
 
     @staticmethod
     def get_log_root_id(metadata):
@@ -1395,9 +1423,9 @@ class ObjectStorageService:
     def get_log_batch_limit(self, metadata):
         raw_value = metadata.get("batch_limit") if metadata else None
         try:
-            return max(int(raw_value or self.dev_operation_batch_limit), 1)
+            return max(int(raw_value or self.operation_batch_limit), 1)
         except (TypeError, ValueError):
-            return self.dev_operation_batch_limit
+            return self.operation_batch_limit
 
     def resolve_original_move_root(self, log_metadata, source_kind: str, fallback_root_id: str):
         operation_id = str(log_metadata.get("operation_id") or "").strip()

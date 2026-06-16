@@ -239,7 +239,7 @@ export default function App() {
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [deleteObjectId, setDeleteObjectId] = useState('');
   const [deleteMode, setDeleteMode] = useState(false);
-  const [devPurgeMode, setDevPurgeMode] = useState(false);
+  const [purgeMode, setPurgeMode] = useState(false);
   const [deleteConfirmKey, setDeleteConfirmKey] = useState('');
   const [deleting, setDeleting] = useState('');
   const [trashAction, setTrashAction] = useState('');
@@ -253,32 +253,33 @@ export default function App() {
   const [recentDeletes, setRecentDeletes] = useState([]);
   const [selectedTrashIds, setSelectedTrashIds] = useState({});
   const [selectedDeleteIds, setSelectedDeleteIds] = useState({});
-  const [devDeletionState, setDevDeletionState] = useState({
-    dev_deletion: false,
-    dev_deletion_root_id: '',
-    dev_deletion_root_parent_id: '',
-    dev_deletion_phase: 'idle',
+  const [purgeState, setPurgeState] = useState({
+    purge_active: false,
+    root_id: '',
+    root_parent_folder_id: '',
+    phase: 'idle',
   });
-  const [devDeleteFolderId, setDevDeleteFolderId] = useState('');
-  const [devDeleting, setDevDeleting] = useState(false);
-  const [devDeleteFolderLabel, setDevDeleteFolderLabel] = useState('');
-  const [devMoveMode, setDevMoveMode] = useState(false);
-  const [devMoveState, setDevMoveState] = useState({
-    dev_move: false,
-    dev_move_log_id: '',
-    dev_move_source_id: '',
-    dev_move_destination_folder_id: '',
-    dev_move_phase: 'idle',
-    dev_move_mode: '',
-    dev_move_source_kind: '',
+  const [purgeFolderId, setPurgeFolderId] = useState('');
+  const [purging, setPurging] = useState(false);
+  const [purgeFolderLabel, setPurgeFolderLabel] = useState('');
+  const [moveSelectionMode, setMoveSelectionMode] = useState(false);
+  const [moveState, setMoveState] = useState({
+    move_active: false,
+    log_id: '',
+    operation_id: '',
+    source_id: '',
+    destination_folder_id: '',
+    phase: 'idle',
+    mode: '',
+    source_kind: '',
   });
-  const [devMoveSourceId, setDevMoveSourceId] = useState('');
-  const [devMoveSourceLabel, setDevMoveSourceLabel] = useState('');
-  const [devMoveSourceKind, setDevMoveSourceKind] = useState('');
-  const [devMoveSourceParentPath, setDevMoveSourceParentPath] = useState('/');
-  const [devMoveDestinationId, setDevMoveDestinationId] = useState('');
-  const [devMoveDestinationLabel, setDevMoveDestinationLabel] = useState('');
-  const [devMoving, setDevMoving] = useState(false);
+  const [moveSourceId, setMoveSourceId] = useState('');
+  const [moveSourceLabel, setMoveSourceLabel] = useState('');
+  const [moveSourceKind, setMoveSourceKind] = useState('');
+  const [moveSourceParentPath, setMoveSourceParentPath] = useState('/');
+  const [moveDestinationId, setMoveDestinationId] = useState('');
+  const [moveDestinationLabel, setMoveDestinationLabel] = useState('');
+  const [moveRunning, setMoveRunning] = useState(false);
 
   const visibleItems = useMemo(() => {
     const keyword = searchQuery.trim().toLowerCase();
@@ -327,8 +328,8 @@ export default function App() {
     setCreatingFolder(false);
     setDeleteObjectId('');
     setDeleteMode(false);
-    setDevPurgeMode(false);
-    setDevMoveMode(false);
+    setPurgeMode(false);
+    setMoveSelectionMode(false);
     setDeleteConfirmKey('');
     setDeleting('');
     setTrashAction('');
@@ -342,31 +343,32 @@ export default function App() {
     setRecentDeletes([]);
     setSelectedTrashIds({});
     setSelectedDeleteIds({});
-    setDevDeletionState({
-      dev_deletion: false,
-      dev_deletion_root_id: '',
-      dev_deletion_root_parent_id: '',
-      dev_deletion_phase: 'idle',
+    setPurgeState({
+      purge_active: false,
+      root_id: '',
+      root_parent_folder_id: '',
+      phase: 'idle',
     });
-    setDevDeleteFolderId('');
-    setDevDeleting(false);
-    setDevDeleteFolderLabel('');
-    setDevMoveState({
-      dev_move: false,
-      dev_move_log_id: '',
-      dev_move_source_id: '',
-      dev_move_destination_folder_id: '',
-      dev_move_phase: 'idle',
-      dev_move_mode: '',
-      dev_move_source_kind: '',
+    setPurgeFolderId('');
+    setPurging(false);
+    setPurgeFolderLabel('');
+    setMoveState({
+      move_active: false,
+      log_id: '',
+      operation_id: '',
+      source_id: '',
+      destination_folder_id: '',
+      phase: 'idle',
+      mode: '',
+      source_kind: '',
     });
-    setDevMoveSourceId('');
-    setDevMoveSourceLabel('');
-    setDevMoveSourceKind('');
-    setDevMoveSourceParentPath('/');
-    setDevMoveDestinationId('');
-    setDevMoveDestinationLabel('');
-    setDevMoving(false);
+    setMoveSourceId('');
+    setMoveSourceLabel('');
+    setMoveSourceKind('');
+    setMoveSourceParentPath('/');
+    setMoveDestinationId('');
+    setMoveDestinationLabel('');
+    setMoveRunning(false);
   }
 
   function handleLogout() {
@@ -455,43 +457,44 @@ export default function App() {
     }
   }
 
-  async function loadDevDeletionState() {
+  async function loadPurgeState() {
     try {
-      const data = await api('/dev/deletion-state', { authToken });
-      setDevDeletionState({
-        dev_deletion: !!data?.dev_deletion,
-        dev_deletion_root_id: data?.dev_deletion_root_id || '',
-        dev_deletion_root_parent_id: data?.dev_deletion_root_parent_id || '',
-        dev_deletion_phase: data?.dev_deletion_phase || 'idle',
+      const data = await api('/purge/state', { authToken });
+      setPurgeState({
+        purge_active: !!data?.purge_active,
+        root_id: data?.root_id || '',
+        root_parent_folder_id: data?.root_parent_folder_id || '',
+        phase: data?.phase || 'idle',
       });
     } catch (err) {
       if (err.message === 'Invalid or expired token') {
         handleLogout();
         setAuthError('Your session expired. Please log in again.');
       } else {
-        setError(err.message || 'Could not load dev deletion state');
+        setError(err.message || 'Could not load purge state');
       }
     }
   }
 
-  async function loadDevMoveState() {
+  async function loadMoveState() {
     try {
-      const data = await api('/dev/move-state', { authToken });
-      setDevMoveState({
-        dev_move: !!data?.dev_move,
-        dev_move_log_id: data?.dev_move_log_id || '',
-        dev_move_source_id: data?.dev_move_source_id || '',
-        dev_move_destination_folder_id: data?.dev_move_destination_folder_id || '',
-        dev_move_phase: data?.dev_move_phase || 'idle',
-        dev_move_mode: data?.dev_move_mode || '',
-        dev_move_source_kind: data?.dev_move_source_kind || '',
+      const data = await api('/move/state', { authToken });
+      setMoveState({
+        move_active: !!data?.move_active,
+        log_id: data?.log_id || '',
+        operation_id: data?.operation_id || '',
+        source_id: data?.source_id || '',
+        destination_folder_id: data?.destination_folder_id || '',
+        phase: data?.phase || 'idle',
+        mode: data?.mode || '',
+        source_kind: data?.source_kind || '',
       });
     } catch (err) {
       if (err.message === 'Invalid or expired token') {
         handleLogout();
         setAuthError('Your session expired. Please log in again.');
       } else {
-        setError(err.message || 'Could not load dev move state');
+        setError(err.message || 'Could not load move state');
       }
     }
   }
@@ -525,8 +528,8 @@ export default function App() {
   useEffect(() => {
     if (authUser && authToken) {
       loadFiles('');
-      loadDevDeletionState();
-      loadDevMoveState();
+      loadPurgeState();
+      loadMoveState();
     }
   }, [authUser, authToken]);
 
@@ -544,11 +547,11 @@ export default function App() {
   }, [actionMenuKey]);
 
   useEffect(() => {
-    if (!devMoveMode || !devMoveSourceId || !devMoveDestinationId) {
+    if (!moveSelectionMode || !moveSourceId || !moveDestinationId) {
       return;
     }
 
-    const selectedDestination = folders.find((item) => normalizeId(item.file_id || item.folder_id) === normalizeId(devMoveDestinationId));
+    const selectedDestination = folders.find((item) => normalizeId(item.file_id || item.folder_id) === normalizeId(moveDestinationId));
     if (!selectedDestination) {
       return;
     }
@@ -557,16 +560,16 @@ export default function App() {
       return;
     }
 
-    setDevMoveDestinationId('');
-    setDevMoveDestinationLabel('');
+    setMoveDestinationId('');
+    setMoveDestinationLabel('');
   }, [
     currentPath,
-    devMoveDestinationId,
-    devMoveMode,
-    devMoveSourceId,
-    devMoveSourceKind,
-    devMoveSourceLabel,
-    devMoveSourceParentPath,
+    moveDestinationId,
+    moveSelectionMode,
+    moveSourceId,
+    moveSourceKind,
+    moveSourceLabel,
+    moveSourceParentPath,
     folders,
   ]);
 
@@ -793,120 +796,120 @@ export default function App() {
     }
   }
 
-  async function handleDevHardDelete({ resume = false } = {}) {
-    const folderId = resume ? '' : normalizeId(devDeleteFolderId);
+  async function handlePurge({ resume = false } = {}) {
+    const folderId = resume ? '' : normalizeId(purgeFolderId);
     if (!resume && !folderId) return;
 
     try {
       setError('');
       setSuccess('');
-      setDevDeleting(true);
-      const data = await api('/dev/hard-delete', {
+      setPurging(true);
+      const data = await api('/purge', {
         method: 'POST',
         body: JSON.stringify({ folder_id: folderId }),
         authToken,
       });
       const deletedFiles = Number(data?.deleted_files || 0);
       const deletedFolders = Number(data?.deleted_folders || 0);
-      const rootFolderId = data?.root_folder_id || folderId || devDeletionState.dev_deletion_root_id;
-      setDevDeleteFolderId('');
-      setDevDeleteFolderLabel('');
+      const rootFolderId = data?.root_folder_id || folderId || purgeState.root_id;
+      setPurgeFolderId('');
+      setPurgeFolderLabel('');
       setSuccess(
-        `${data?.resumed ? 'Resumed' : 'Started'} dev hard delete for ${rootFolderId}. Removed ${deletedFolders} folder${deletedFolders === 1 ? '' : 's'} and ${deletedFiles} file${deletedFiles === 1 ? '' : 's'}.`,
+        `${data?.resumed ? 'Resumed' : 'Started'} purge for ${rootFolderId}. Removed ${deletedFolders} folder${deletedFolders === 1 ? '' : 's'} and ${deletedFiles} file${deletedFiles === 1 ? '' : 's'}.`,
       );
       await loadFiles('', true, true, true);
-      await loadDevDeletionState();
+      await loadPurgeState();
     } catch (err) {
-      setError(err.message || 'Dev hard delete failed');
-      await loadDevDeletionState();
+      setError(err.message || 'Purge failed');
+      await loadPurgeState();
     } finally {
-      setDevDeleting(false);
+      setPurging(false);
     }
   }
 
-  function selectFolderForDevHardDelete(folder) {
+  function selectFolderForPurge(folder) {
     const folderId = normalizeId(folder?.file_id || folder?.folder_id);
     if (!folderId) return;
 
-    setDevDeleteFolderId(folderId);
-    setDevDeleteFolderLabel(folder?.path || folder?.name || folderId);
-    setSuccess(`Selected ${folder?.path || folder?.name || folderId} for dev hard delete.`);
+    setPurgeFolderId(folderId);
+    setPurgeFolderLabel(folder?.path || folder?.name || folderId);
+    setSuccess(`Selected ${folder?.path || folder?.name || folderId} for purge.`);
     setError('');
   }
 
-  function toggleDevPurgeMode() {
+  function togglePurgeMode() {
     if (viewMode === 'trash') {
       return;
     }
 
     setDeleteConfirmKey('');
     setDeleteMode(false);
-    setDevMoveMode(false);
-    setDevPurgeMode((current) => {
+    setMoveSelectionMode(false);
+    setPurgeMode((current) => {
       if (current) {
-        setDevDeleteFolderId('');
-        setDevDeleteFolderLabel('');
+        setPurgeFolderId('');
+        setPurgeFolderLabel('');
       }
       return !current;
     });
   }
 
-  function toggleDevMoveMode() {
+  function toggleMoveSelectionMode() {
     if (viewMode === 'trash') {
       return;
     }
 
     setDeleteConfirmKey('');
     setDeleteMode(false);
-    setDevPurgeMode(false);
-    setDevMoveMode((current) => {
+    setPurgeMode(false);
+    setMoveSelectionMode((current) => {
       if (current) {
-        setDevMoveSourceId('');
-        setDevMoveSourceLabel('');
-        setDevMoveSourceKind('');
-        setDevMoveSourceParentPath('/');
-        setDevMoveDestinationId('');
-        setDevMoveDestinationLabel('');
+        setMoveSourceId('');
+        setMoveSourceLabel('');
+        setMoveSourceKind('');
+        setMoveSourceParentPath('/');
+        setMoveDestinationId('');
+        setMoveDestinationLabel('');
       }
       return !current;
     });
   }
 
-  function selectItemForDevMoveSource(item) {
+  function selectItemForMoveSource(item) {
     const sourceId = normalizeId(item?.file_id || item?.folder_id);
     if (!sourceId) return;
 
-    setDevMoveSourceId(sourceId);
-    setDevMoveSourceLabel(item?.path || item?.name || sourceId);
-    setDevMoveSourceKind(item?.kind || '');
-    setDevMoveSourceParentPath(buildParentPathFromItem(item));
-    if (normalizeId(devMoveDestinationId) === sourceId) {
-      setDevMoveDestinationId('');
-      setDevMoveDestinationLabel('');
+    setMoveSourceId(sourceId);
+    setMoveSourceLabel(item?.path || item?.name || sourceId);
+    setMoveSourceKind(item?.kind || '');
+    setMoveSourceParentPath(buildParentPathFromItem(item));
+    if (normalizeId(moveDestinationId) === sourceId) {
+      setMoveDestinationId('');
+      setMoveDestinationLabel('');
     }
     setSuccess(`Selected ${item?.path || item?.name || sourceId} as move source.`);
     setError('');
   }
 
-  function selectFolderForDevMoveDestination(folder) {
+  function selectFolderForMoveDestination(folder) {
     const destinationId = normalizeId(folder?.file_id || folder?.folder_id);
     if (!destinationId) return;
 
-    setDevMoveDestinationId(destinationId);
-    setDevMoveDestinationLabel(folder?.path || folder?.name || destinationId);
+    setMoveDestinationId(destinationId);
+    setMoveDestinationLabel(folder?.path || folder?.name || destinationId);
     setSuccess(`Selected ${folder?.path || folder?.name || destinationId} as move destination.`);
     setError('');
   }
 
   function useCurrentFolderAsMoveDestination() {
-    setDevMoveDestinationId(currentFolderId || '');
-    setDevMoveDestinationLabel(currentPath || '/');
+    setMoveDestinationId(currentFolderId || '');
+    setMoveDestinationLabel(currentPath || '/');
     setSuccess(`Selected ${currentPath || '/'} as move destination.`);
     setError('');
   }
 
   function getMoveDestinationBlockReason(folder) {
-    if (!devMoveMode || !devMoveSourceId) {
+    if (!moveSelectionMode || !moveSourceId) {
       return '';
     }
 
@@ -915,12 +918,12 @@ export default function App() {
       return '';
     }
 
-    if (folderId === normalizeId(devMoveSourceId)) {
+    if (folderId === normalizeId(moveSourceId)) {
       return 'Not allowed: source';
     }
 
-    if (devMoveSourceKind === 'folder') {
-      const sourcePath = ensureFolderPath(devMoveSourceLabel || '/');
+    if (moveSourceKind === 'folder') {
+      const sourcePath = ensureFolderPath(moveSourceLabel || '/');
       const destinationPath = ensureFolderPath(folder?.path || '/');
       if (destinationPath.startsWith(sourcePath)) {
         return 'Not allowed: inside source';
@@ -928,9 +931,9 @@ export default function App() {
       return '';
     }
 
-    if (devMoveSourceKind === 'file') {
+    if (moveSourceKind === 'file') {
       const destinationPath = ensureFolderPath(folder?.path || '/');
-      if (destinationPath === ensureFolderPath(devMoveSourceParentPath || '/')) {
+      if (destinationPath === ensureFolderPath(moveSourceParentPath || '/')) {
         return 'Not allowed: same folder';
       }
     }
@@ -939,15 +942,15 @@ export default function App() {
   }
 
   function getCurrentFolderMoveBlockReason() {
-    if (!devMoveMode || !devMoveSourceId) {
+    if (!moveSelectionMode || !moveSourceId) {
       return '';
     }
 
-    if (devMoveSourceKind === 'folder') {
-      if (normalizeId(currentFolderId) === normalizeId(devMoveSourceId)) {
+    if (moveSourceKind === 'folder') {
+      if (normalizeId(currentFolderId) === normalizeId(moveSourceId)) {
         return 'Not allowed: source';
       }
-      const sourcePath = ensureFolderPath(devMoveSourceLabel || '/');
+      const sourcePath = ensureFolderPath(moveSourceLabel || '/');
       const destinationPath = ensureFolderPath(currentPath || '/');
       if (destinationPath.startsWith(sourcePath)) {
         return 'Not allowed: inside source';
@@ -955,23 +958,23 @@ export default function App() {
       return '';
     }
 
-    if (devMoveSourceKind === 'file' && ensureFolderPath(currentPath || '/') === ensureFolderPath(devMoveSourceParentPath || '/')) {
+    if (moveSourceKind === 'file' && ensureFolderPath(currentPath || '/') === ensureFolderPath(moveSourceParentPath || '/')) {
       return 'Not allowed: same folder';
     }
 
     return '';
   }
 
-  async function handleDevMove(mode, { resume = false } = {}) {
-    const sourceId = resume ? '' : normalizeId(devMoveSourceId);
-    const destinationId = resume ? '' : normalizeId(devMoveDestinationId);
+  async function handleMoveOperation(mode, { resume = false } = {}) {
+    const sourceId = resume ? '' : normalizeId(moveSourceId);
+    const destinationId = resume ? '' : normalizeId(moveDestinationId);
     if (!resume && !sourceId) return;
 
     try {
       setError('');
       setSuccess('');
-      setDevMoving(true);
-      const data = await api('/dev/move', {
+      setMoveRunning(true);
+      const data = await api('/move', {
         method: 'POST',
         body: JSON.stringify({
           source_id: sourceId,
@@ -980,23 +983,23 @@ export default function App() {
         }),
         authToken,
       });
-      setDevMoveSourceId('');
-      setDevMoveSourceLabel('');
-      setDevMoveSourceKind('');
-      setDevMoveSourceParentPath('/');
-      setDevMoveDestinationId('');
-      setDevMoveDestinationLabel('');
+      setMoveSourceId('');
+      setMoveSourceLabel('');
+      setMoveSourceKind('');
+      setMoveSourceParentPath('/');
+      setMoveDestinationId('');
+      setMoveDestinationLabel('');
       setSuccess(
         `${data?.resumed ? 'Resumed' : 'Started'} move for ${data?.source_entry_id || sourceId}. Copied ${Number(data?.moved_folders || 0)} folder${Number(data?.moved_folders || 0) === 1 ? '' : 's'} and ${Number(data?.moved_files || 0)} file${Number(data?.moved_files || 0) === 1 ? '' : 's'}.`,
       );
       await loadFiles(currentFolderId, true, true, true);
-      await loadDevMoveState();
-      await loadDevDeletionState();
+      await loadMoveState();
+      await loadPurgeState();
     } catch (err) {
       setError(err.message || 'Move failed');
-      await loadDevMoveState();
+      await loadMoveState();
     } finally {
-      setDevMoving(false);
+      setMoveRunning(false);
     }
   }
 
@@ -1186,10 +1189,10 @@ export default function App() {
               }
               setDeleteConfirmKey('');
               setSelectedDeleteIds({});
-              setDevPurgeMode(false);
-              setDevMoveMode(false);
-              setDevDeleteFolderId('');
-              setDevDeleteFolderLabel('');
+              setPurgeMode(false);
+              setMoveSelectionMode(false);
+              setPurgeFolderId('');
+              setPurgeFolderLabel('');
               setDeleteMode((current) => !current);
             }}
             disabled={viewMode === 'trash'}
@@ -1198,30 +1201,30 @@ export default function App() {
             {deleteMode ? 'Exit Delete' : 'Delete'}
           </button>
           <button
-            className={devMoveMode ? 'dev-danger-button' : 'secondary-button'}
-            onClick={toggleDevMoveMode}
+            className={moveSelectionMode ? 'accent-danger-button' : 'secondary-button'}
+            onClick={toggleMoveSelectionMode}
             disabled={viewMode === 'trash'}
             type="button"
           >
-            {devMoveMode ? 'Exit Dev Move' : 'Dev Move'}
+            {moveSelectionMode ? 'Exit Move' : 'Move'}
           </button>
           <button
-            className={devPurgeMode ? 'dev-danger-button' : 'secondary-button'}
-            onClick={toggleDevPurgeMode}
+            className={purgeMode ? 'accent-danger-button' : 'secondary-button'}
+            onClick={togglePurgeMode}
             disabled={viewMode === 'trash'}
             type="button"
           >
-            {devPurgeMode ? 'Exit Dev Purge' : 'Dev Purge'}
+            {purgeMode ? 'Exit Purge' : 'Purge'}
           </button>
           <button
             className={viewMode === 'trash' ? 'danger-button' : 'secondary-button'}
             onClick={() => {
               setDeleteConfirmKey('');
               setDeleteMode(false);
-              setDevPurgeMode(false);
-              setDevMoveMode(false);
-              setDevDeleteFolderId('');
-              setDevDeleteFolderLabel('');
+              setPurgeMode(false);
+              setMoveSelectionMode(false);
+              setPurgeFolderId('');
+              setPurgeFolderLabel('');
               if (viewMode === 'trash') {
                 loadFiles('', false, true, true);
               } else {
@@ -1318,26 +1321,26 @@ export default function App() {
                 </div>
               </div>
             ) : null}
-            {viewMode === 'files' && devPurgeMode ? (
-              <div className="delete-history-box dev-purge-box">
-                <div className="delete-history-title">Dev purge selection</div>
+            {viewMode === 'files' && purgeMode ? (
+              <div className="delete-history-box operation-box">
+                <div className="delete-history-title">Purge selection</div>
                 <div className="delete-history-list">
                   <div className="helper-text">
-                    Click one folder row to select it for subtree purge. Turning dev purge off will clear the selection.
+                    Click one folder row to select it for subtree purge. Turning purge off will clear the selection.
                   </div>
-                  {devDeleteFolderLabel ? <div className="delete-tag">{devDeleteFolderLabel}</div> : null}
+                  {purgeFolderLabel ? <div className="delete-tag">{purgeFolderLabel}</div> : null}
                 </div>
               </div>
             ) : null}
-            {viewMode === 'files' && devMoveMode ? (
-              <div className="delete-history-box dev-purge-box">
-                <div className="delete-history-title">Dev move selection</div>
+            {viewMode === 'files' && moveSelectionMode ? (
+              <div className="delete-history-box operation-box">
+                <div className="delete-history-title">Move selection</div>
                 <div className="delete-history-list">
                   <div className="helper-text">
                     Mark one file or folder as the source, then mark one folder or the current path as the destination.
                   </div>
-                  {devMoveSourceLabel ? <div className="delete-tag">Source: {devMoveSourceLabel}</div> : null}
-                  {devMoveDestinationLabel ? <div className="delete-tag">Destination: {devMoveDestinationLabel}</div> : null}
+                  {moveSourceLabel ? <div className="delete-tag">Source: {moveSourceLabel}</div> : null}
+                  {moveDestinationLabel ? <div className="delete-tag">Destination: {moveDestinationLabel}</div> : null}
                 </div>
               </div>
             ) : null}
@@ -1416,11 +1419,11 @@ export default function App() {
                   }
 
                   if (item.kind === 'folder') {
-                    const isMoveSource = devMoveMode && normalizeId(devMoveSourceId) === normalizeId(item.file_id);
-                    const isMoveDestination = devMoveMode && normalizeId(devMoveDestinationId) === normalizeId(item.file_id);
+                    const isMoveSource = moveSelectionMode && normalizeId(moveSourceId) === normalizeId(item.file_id);
+                    const isMoveDestination = moveSelectionMode && normalizeId(moveDestinationId) === normalizeId(item.file_id);
                     const moveDestinationBlockReason = getMoveDestinationBlockReason(item);
                     return (
-                      <li className={`file-row folder-row${isMoveSource ? ' dev-move-source-row' : ''}${isMoveDestination ? ' dev-move-destination-row' : ''}`} key={item.file_id}>
+                      <li className={`file-row folder-row${isMoveSource ? ' move-source-row' : ''}${isMoveDestination ? ' move-destination-row' : ''}`} key={item.file_id}>
                         <div className="folder-row-shell">
                           <button className="folder-open-button" onClick={() => handleOpenFolder(item.file_id)} type="button">
                             <span className="folder-icon" aria-hidden="true">DIR</span>
@@ -1440,40 +1443,40 @@ export default function App() {
                                 <button className="danger-button" onClick={() => setDeleteConfirmKey(item.file_id)} type="button">Delete</button>
                               )}
                             </div>
-                          ) : devPurgeMode ? (
+                          ) : purgeMode ? (
                             <div className="row-actions">
                               <button
-                                className={normalizeId(devDeleteFolderId) === normalizeId(item.file_id) ? 'dev-danger-button' : 'secondary-button'}
+                                className={normalizeId(purgeFolderId) === normalizeId(item.file_id) ? 'accent-danger-button' : 'secondary-button'}
                                 onClick={(event) => {
                                   event.stopPropagation();
-                                  if (normalizeId(devDeleteFolderId) === normalizeId(item.file_id)) {
-                                    setDevDeleteFolderId('');
-                                    setDevDeleteFolderLabel('');
-                                    setSuccess(`Cleared dev purge selection for ${item.path || item.name || item.file_id}.`);
+                                  if (normalizeId(purgeFolderId) === normalizeId(item.file_id)) {
+                                    setPurgeFolderId('');
+                                    setPurgeFolderLabel('');
+                                    setSuccess(`Cleared purge selection for ${item.path || item.name || item.file_id}.`);
                                     setError('');
                                   } else {
-                                    selectFolderForDevHardDelete(item);
+                                    selectFolderForPurge(item);
                                   }
                                 }}
                                 type="button"
                               >
-                                {normalizeId(devDeleteFolderId) === normalizeId(item.file_id) ? 'Selected' : 'Select'}
+                                {normalizeId(purgeFolderId) === normalizeId(item.file_id) ? 'Selected' : 'Select'}
                               </button>
                             </div>
-                          ) : devMoveMode ? (
+                          ) : moveSelectionMode ? (
                             <div className="row-actions">
                               <button
-                                className={isMoveSource ? 'dev-danger-button' : 'secondary-button'}
+                                className={isMoveSource ? 'accent-danger-button' : 'secondary-button'}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   if (isMoveSource) {
-                                    setDevMoveSourceId('');
-                                    setDevMoveSourceLabel('');
-                                    setDevMoveSourceKind('');
+                                    setMoveSourceId('');
+                                    setMoveSourceLabel('');
+                                    setMoveSourceKind('');
                                     setSuccess(`Cleared move source for ${item.path || item.name || item.file_id}.`);
                                     setError('');
                                   } else {
-                                    selectItemForDevMoveSource(item);
+                                    selectItemForMoveSource(item);
                                   }
                                 }}
                                 type="button"
@@ -1481,16 +1484,16 @@ export default function App() {
                                 {isMoveSource ? 'Source' : 'Mark source'}
                               </button>
                               <button
-                                className={isMoveDestination ? 'dev-danger-button' : 'secondary-button'}
+                                className={isMoveDestination ? 'accent-danger-button' : 'secondary-button'}
                                 onClick={(event) => {
                                   event.stopPropagation();
                                   if (isMoveDestination) {
-                                    setDevMoveDestinationId('');
-                                    setDevMoveDestinationLabel('');
+                                    setMoveDestinationId('');
+                                    setMoveDestinationLabel('');
                                     setSuccess(`Cleared move destination for ${item.path || item.name || item.file_id}.`);
                                     setError('');
                                   } else {
-                                    selectFolderForDevMoveDestination(item);
+                                    selectFolderForMoveDestination(item);
                                   }
                                 }}
                                 disabled={!isMoveDestination && !!moveDestinationBlockReason}
@@ -1508,10 +1511,10 @@ export default function App() {
                   }
 
                   const renamePreview = buildRenamedObjectName(renameDrafts[item.file_id] || '', item.file_extension || '');
-                  const isMoveSource = devMoveMode && normalizeId(devMoveSourceId) === normalizeId(item.file_id);
+                  const isMoveSource = moveSelectionMode && normalizeId(moveSourceId) === normalizeId(item.file_id);
                   return (
                     <li
-                      className={`file-row${isMoveSource ? ' dev-move-source-row' : ''}`}
+                      className={`file-row${isMoveSource ? ' move-source-row' : ''}`}
                       key={item.file_id}
                       data-file-key={item.file_id}
                       onContextMenu={(event) => {
@@ -1612,18 +1615,18 @@ export default function App() {
                             <button className="danger-button" onClick={() => setDeleteConfirmKey(item.file_id)} type="button">Delete</button>
                           )
                         ) : null}
-                        {devMoveMode ? (
+                        {moveSelectionMode ? (
                           <button
-                            className={isMoveSource ? 'dev-danger-button' : 'secondary-button'}
+                            className={isMoveSource ? 'accent-danger-button' : 'secondary-button'}
                             onClick={() => {
                               if (isMoveSource) {
-                                setDevMoveSourceId('');
-                                setDevMoveSourceLabel('');
-                                setDevMoveSourceKind('');
+                                setMoveSourceId('');
+                                setMoveSourceLabel('');
+                                setMoveSourceKind('');
                                 setSuccess(`Cleared move source for ${item.path || item.name || item.file_id}.`);
                                 setError('');
                               } else {
-                                selectItemForDevMoveSource(item);
+                                selectItemForMoveSource(item);
                               }
                             }}
                             type="button"
@@ -1697,21 +1700,21 @@ export default function App() {
                 </div>
               </section>
 
-              <section className="panel side-panel dev-tool-panel">
+              <section className="panel side-panel operation-tool-panel">
                 <div className="section-head">
-                  <h2>Dev hard delete</h2>
+                  <h2>Subtree purge</h2>
                 </div>
                 <div className="stack-form">
-                  <div className="dev-tool-chip-row">
-                    <span className="dev-tool-chip dev-tool-chip-blue">DFS</span>
-                    <span className="dev-tool-chip dev-tool-chip-red">DB + S3 purge</span>
+                  <div className="operation-chip-row">
+                    <span className="operation-chip operation-chip-blue">DFS</span>
+                    <span className="operation-chip operation-chip-red">DB + S3 purge</span>
                   </div>
                   <label className="field">
                     <span>Folder id</span>
                     <input
                       type="text"
-                      value={devDeleteFolderId}
-                      onChange={(event) => setDevDeleteFolderId(event.target.value)}
+                      value={purgeFolderId}
+                      onChange={(event) => setPurgeFolderId(event.target.value)}
                       placeholder="folder id"
                     />
                   </label>
@@ -1719,54 +1722,54 @@ export default function App() {
                     Deletes the selected folder subtree permanently from DynamoDB and S3. Files and empty folders are marked
                     `deletion_pending` before removal.
                   </div>
-                  {devDeleteFolderLabel ? (
-                    <div className="dev-tool-status">
-                      <div>Selected folder: {devDeleteFolderLabel}</div>
-                      <div>Selected id: {devDeleteFolderId}</div>
+                  {purgeFolderLabel ? (
+                    <div className="operation-status">
+                      <div>Selected folder: {purgeFolderLabel}</div>
+                      <div>Selected id: {purgeFolderId}</div>
                     </div>
                   ) : null}
-                  {devDeletionState.dev_deletion ? (
-                    <div className="dev-tool-status">
-                      <div>In progress: {devDeletionState.dev_deletion_root_id || 'unknown root'}</div>
-                      <div>Phase: {devDeletionState.dev_deletion_phase || 'deleting'}</div>
+                  {purgeState.purge_active ? (
+                    <div className="operation-status">
+                      <div>In progress: {purgeState.root_id || 'unknown root'}</div>
+                      <div>Phase: {purgeState.phase || 'deleting'}</div>
                     </div>
                   ) : (
-                    <div className="dev-tool-status dev-tool-status-idle">No dev deletion is active.</div>
+                    <div className="operation-status operation-status-idle">No purge is active.</div>
                   )}
                   <button
-                    className="dev-danger-button"
-                    onClick={() => handleDevHardDelete()}
-                    disabled={!normalizeId(devDeleteFolderId) || devDeleting}
+                    className="accent-danger-button"
+                    onClick={() => handlePurge()}
+                    disabled={!normalizeId(purgeFolderId) || purging}
                     type="button"
                   >
-                    {devDeleting ? 'Deleting subtree...' : 'Start subtree hard delete'}
+                    {purging ? 'Deleting subtree...' : 'Start subtree purge'}
                   </button>
                   <button
                     className="secondary-button"
-                    onClick={() => handleDevHardDelete({ resume: true })}
-                    disabled={!devDeletionState.dev_deletion || devDeleting}
+                    onClick={() => handlePurge({ resume: true })}
+                    disabled={!purgeState.purge_active || purging}
                     type="button"
                   >
-                    {devDeleting ? 'Resuming...' : 'Resume pending delete'}
+                    {purging ? 'Resuming...' : 'Resume pending purge'}
                   </button>
                 </div>
               </section>
 
-              <section className="panel side-panel dev-tool-panel">
+              <section className="panel side-panel operation-tool-panel">
                 <div className="section-head">
-                  <h2>Dev move</h2>
+                  <h2>Move</h2>
                 </div>
                 <div className="stack-form">
-                  <div className="dev-tool-chip-row">
-                    <span className="dev-tool-chip dev-tool-chip-blue">DFS copy</span>
-                    <span className="dev-tool-chip dev-tool-chip-red">Move + purge</span>
+                  <div className="operation-chip-row">
+                    <span className="operation-chip operation-chip-blue">DFS copy</span>
+                    <span className="operation-chip operation-chip-red">Move + purge</span>
                   </div>
                   <label className="field">
                     <span>Source id</span>
                     <input
                       type="text"
-                      value={devMoveSourceId}
-                      onChange={(event) => setDevMoveSourceId(event.target.value)}
+                      value={moveSourceId}
+                      onChange={(event) => setMoveSourceId(event.target.value)}
                       placeholder="file or folder id"
                     />
                   </label>
@@ -1774,8 +1777,8 @@ export default function App() {
                     <span>Destination folder id</span>
                     <input
                       type="text"
-                      value={devMoveDestinationId}
-                      onChange={(event) => setDevMoveDestinationId(event.target.value)}
+                      value={moveDestinationId}
+                      onChange={(event) => setMoveDestinationId(event.target.value)}
                       placeholder="folder id or empty for root"
                     />
                   </label>
@@ -1790,52 +1793,52 @@ export default function App() {
                   >
                     {getCurrentFolderMoveBlockReason() ? `${getCurrentFolderMoveBlockReason()} destination` : 'Use current folder as destination'}
                   </button>
-                  {devMoveSourceLabel ? (
-                    <div className="dev-tool-status">
-                      <div>Source: {devMoveSourceLabel}</div>
-                      <div>Kind: {devMoveSourceKind || 'unknown'}</div>
-                      <div>Id: {devMoveSourceId}</div>
+                  {moveSourceLabel ? (
+                    <div className="operation-status">
+                      <div>Source: {moveSourceLabel}</div>
+                      <div>Kind: {moveSourceKind || 'unknown'}</div>
+                      <div>Id: {moveSourceId}</div>
                     </div>
                   ) : null}
-                  {devMoveDestinationLabel ? (
-                    <div className="dev-tool-status">
-                      <div>Destination: {devMoveDestinationLabel}</div>
-                      <div>Id: {devMoveDestinationId || '__root__'}</div>
+                  {moveDestinationLabel ? (
+                    <div className="operation-status">
+                      <div>Destination: {moveDestinationLabel}</div>
+                      <div>Id: {moveDestinationId || '__root__'}</div>
                     </div>
                   ) : null}
-                  {devMoveState.dev_move ? (
-                    <div className="dev-tool-status">
-                      <div>In progress: {devMoveState.dev_move_source_id || 'unknown source'}</div>
-                      <div>Kind: {devMoveState.dev_move_source_kind || 'unknown'}</div>
-                      <div>Mode: {devMoveState.dev_move_mode || 'merge'}</div>
-                      <div>Phase: {devMoveState.dev_move_phase || 'copying'}</div>
+                  {moveState.move_active ? (
+                    <div className="operation-status">
+                      <div>In progress: {moveState.source_id || 'unknown source'}</div>
+                      <div>Kind: {moveState.source_kind || 'unknown'}</div>
+                      <div>Mode: {moveState.mode || 'merge'}</div>
+                      <div>Phase: {moveState.phase || 'copying'}</div>
                     </div>
                   ) : (
-                    <div className="dev-tool-status dev-tool-status-idle">No dev move is active.</div>
+                    <div className="operation-status operation-status-idle">No move is active.</div>
                   )}
                   <button
-                    className="dev-danger-button"
-                    onClick={() => handleDevMove('merge')}
-                    disabled={!normalizeId(devMoveSourceId) || devMoving}
+                    className="accent-danger-button"
+                    onClick={() => handleMoveOperation('merge')}
+                    disabled={!normalizeId(moveSourceId) || moveRunning}
                     type="button"
                   >
-                    {devMoving ? 'Moving...' : 'Start merge move'}
+                    {moveRunning ? 'Moving...' : 'Start merge move'}
                   </button>
                   <button
                     className="secondary-button"
-                    onClick={() => handleDevMove('avoid_conflict')}
-                    disabled={!normalizeId(devMoveSourceId) || devMoving}
+                    onClick={() => handleMoveOperation('avoid_conflict')}
+                    disabled={!normalizeId(moveSourceId) || moveRunning}
                     type="button"
                   >
-                    {devMoving ? 'Preparing...' : 'Start avoid-conflict move'}
+                    {moveRunning ? 'Preparing...' : 'Start avoid-conflict move'}
                   </button>
                   <button
                     className="secondary-button"
-                    onClick={() => handleDevMove(devMoveState.dev_move_mode || 'merge', { resume: true })}
-                    disabled={!devMoveState.dev_move || devMoving}
+                    onClick={() => handleMoveOperation(moveState.mode || 'merge', { resume: true })}
+                    disabled={!moveState.move_active || moveRunning}
                     type="button"
                   >
-                    {devMoving ? 'Resuming...' : 'Resume pending move'}
+                    {moveRunning ? 'Resuming...' : 'Resume pending move'}
                   </button>
                 </div>
               </section>
