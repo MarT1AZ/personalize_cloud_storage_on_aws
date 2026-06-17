@@ -31,6 +31,7 @@ class AuthSettings:
     jwt_secret: str
     jwt_algorithm: str
     access_token_expire_minutes: int
+    user_data_table: str
 
 
 def build_auth_settings():
@@ -42,11 +43,13 @@ def build_auth_settings():
 
     jwt_algorithm = os.getenv("JWT_ALGORITHM", "HS256").strip() or "HS256"
     access_token_expire_minutes = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
+    user_data_table = os.getenv("USER_DATA_TABLE", "user-data").strip() or "user-data"
 
     return AuthSettings(
         jwt_secret=jwt_secret,
         jwt_algorithm=jwt_algorithm,
         access_token_expire_minutes=access_token_expire_minutes,
+        user_data_table=user_data_table,
     )
 
 

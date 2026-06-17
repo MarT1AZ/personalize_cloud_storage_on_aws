@@ -1,25 +1,57 @@
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
+import boto3
+from boto3.dynamodb.conditions import Key
 import jwt
 from fastapi import HTTPException, status
 
 from app.auth_config import auth_settings
-from app.auth_data import TEMP_PASSWORD_HASHES, TEMP_USERS
-from app.auth_models import LoginResponse, UserProfile
+from app.auth_models import BucketInfo, LoginResponse, UserProfile
 
 
 class AuthService:
+    USERNAME_INDEX = "username_index"
+
+    def __init__(self, dynamodb_resource=None):
+        self.dynamodb = dynamodb_resource or boto3.resource("dynamodb")
+        self.user_table = self.dynamodb.Table(auth_settings.user_data_table)
+
+    def get_user_item(self, username: str):
+        normalized_username = str(username or "").strip()
+        if not normalized_username:
+            return None
+
+        response = self.user_table.query(
+            IndexName=self.USERNAME_INDEX,
+            KeyConditionExpression=Key("username").eq(normalized_username),
+            Limit=1,
+        )
+        items = response.get("Items") or []
+        return items[0] if items else None
+
     def get_user_data(self, username: str):
-        user_data = TEMP_USERS.get("user-data")
-        if user_data and user_data.username == username:
-            return user_data
-        return None
+        user_item = self.get_user_item(username)
+        if not user_item:
+            return None
+
+        bucket_name = str(user_item.get("bucket") or "").strip()
+        if not bucket_name:
+            return None
+
+        return UserProfile(
+            username=str(user_item.get("username") or "").strip(),
+            bucket=BucketInfo(
+                main_bucket=bucket_name,
+                trash_bucket=None,
+            ),
+        )
 
     def get_password_hash(self, username: str):
-        if TEMP_PASSWORD_HASHES.get("username") == username:
-            return TEMP_PASSWORD_HASHES.get("pwd-hash")
-        return None
+        user_item = self.get_user_item(username)
+        if not user_item:
+            return None
+        return str(user_item.get("pwd-hash") or "").strip() or None
 
     def verify_user_credentials(self, username: str, password: str) -> UserProfile:
         user_data = self.get_user_data(username)
