@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import LoginScreen from './components/LoginScreen';
 import ObjectBrowserPanel from './components/ObjectBrowserPanel';
+import TreePanel from './components/TreePanel';
 import WorkspaceHeader from './components/WorkspaceHeader';
 import WorkspaceSidebar from './components/WorkspaceSidebar';
 
@@ -230,6 +231,12 @@ export default function App() {
   const [currentPath, setCurrentPath] = useState('/');
   const [breadcrumbItems, setBreadcrumbItems] = useState([{ label: 'Root', folder_id: '' }]);
   const [viewMode, setViewMode] = useState('files');
+  const [contentView, setContentView] = useState('objects');
+  const [treeScope, setTreeScope] = useState('root');
+  const [treeVisibility, setTreeVisibility] = useState('active');
+  const [treeData, setTreeData] = useState(null);
+  const [treeLoading, setTreeLoading] = useState(false);
+  const [treeError, setTreeError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [sortMode, setSortMode] = useState('alpha-asc');
   const [groupMode, setGroupMode] = useState('folder-first');
@@ -319,6 +326,12 @@ export default function App() {
     setCurrentPath('/');
     setBreadcrumbItems([{ label: 'Root', folder_id: '' }]);
     setViewMode('files');
+    setContentView('objects');
+    setTreeScope('root');
+    setTreeVisibility('active');
+    setTreeData(null);
+    setTreeLoading(false);
+    setTreeError('');
     setSearchQuery('');
     setSortMode('alpha-asc');
     setGroupMode('folder-first');
@@ -448,6 +461,10 @@ export default function App() {
       setDeleteMode(false);
       setDeleteConfirmKey('');
       setViewMode('trash');
+      setContentView('objects');
+      setTreeData(null);
+      setTreeError('');
+      setTreeLoading(false);
     } catch (err) {
       if (err.message === 'Invalid or expired token') {
         handleLogout();
@@ -458,6 +475,44 @@ export default function App() {
     } finally {
       setLoading(false);
       setRefreshing(false);
+    }
+  }
+
+  async function loadTreeData({
+    folderId = currentFolderId,
+    scope = treeScope,
+    visibility = treeVisibility,
+    targetViewMode = viewMode,
+  } = {}) {
+    if (targetViewMode === 'trash') {
+      setTreeData(null);
+      setTreeError('');
+      setTreeLoading(false);
+      return;
+    }
+
+    try {
+      setTreeError('');
+      setTreeLoading(true);
+      const params = new URLSearchParams();
+      if (scope === 'current' && normalizeId(folderId)) {
+        params.set('root_folder_id', normalizeId(folderId));
+      }
+      if (visibility === 'all') {
+        params.set('include_deleted', 'true');
+      }
+      const suffix = params.toString() ? `?${params.toString()}` : '';
+      const data = await api(`/tree${suffix}`, { authToken });
+      setTreeData(data?.tree || null);
+    } catch (err) {
+      if (err.message === 'Invalid or expired token') {
+        handleLogout();
+        setAuthError('Your session expired. Please log in again.');
+      } else {
+        setTreeError(err.message || 'Could not load tree');
+      }
+    } finally {
+      setTreeLoading(false);
     }
   }
 
@@ -536,6 +591,21 @@ export default function App() {
       loadMoveState();
     }
   }, [authUser, authToken]);
+
+  useEffect(() => {
+    if (!authUser || !authToken) {
+      return;
+    }
+    if (viewMode !== 'files' || contentView !== 'tree') {
+      return;
+    }
+    loadTreeData({
+      folderId: currentFolderId,
+      scope: treeScope,
+      visibility: treeVisibility,
+      targetViewMode: viewMode,
+    });
+  }, [authUser, authToken, contentView, currentFolderId, treeScope, treeVisibility, viewMode]);
 
   useEffect(() => {
     function handlePointerDown(event) {
@@ -1157,6 +1227,7 @@ export default function App() {
     setMoveSelectionMode(false);
     setPurgeFolderId('');
     setPurgeFolderLabel('');
+    setContentView('objects');
     if (viewMode === 'trash') {
       loadFiles('', false, true, true);
     } else {
@@ -1164,9 +1235,31 @@ export default function App() {
     }
   }
 
+  function switchContentView(nextView) {
+    if (viewMode === 'trash') {
+      return;
+    }
+    setDeleteConfirmKey('');
+    setDeleteMode(false);
+    setPurgeMode(false);
+    setMoveSelectionMode(false);
+    setPurgeFolderId('');
+    setPurgeFolderLabel('');
+    setContentView(nextView);
+  }
+
   function refreshCurrentView() {
     if (viewMode === 'trash') {
       loadTrash(true);
+      return;
+    }
+    if (contentView === 'tree') {
+      loadTreeData({
+        folderId: currentFolderId,
+        scope: treeScope,
+        visibility: treeVisibility,
+        targetViewMode: viewMode,
+      });
       return;
     }
     loadFiles(currentFolderId, true);
@@ -1256,11 +1349,13 @@ export default function App() {
       <WorkspaceHeader
         authUser={authUser}
         viewMode={viewMode}
+        contentView={contentView}
         deleteMode={deleteMode}
         moveSelectionMode={moveSelectionMode}
         purgeMode={purgeMode}
         refreshing={refreshing}
         loading={loading}
+        onSwitchContentView={switchContentView}
         onToggleDeleteMode={toggleDeleteMode}
         onToggleMoveSelectionMode={toggleMoveSelectionMode}
         onTogglePurgeMode={togglePurgeMode}
@@ -1271,74 +1366,89 @@ export default function App() {
 
       <section className="workspace-grid">
         <div className="main-column">
-          <ObjectBrowserPanel
-            viewMode={viewMode}
-            visibleItems={visibleItems}
-            totalItemCount={totalItemCount}
-            breadcrumbItems={breadcrumbItems}
-            currentFolderId={currentFolderId}
-            searchQuery={searchQuery}
-            sortMode={sortMode}
-            groupMode={groupMode}
-            loading={loading}
-            error={error}
-            success={success}
-            recentDeletes={recentDeletes}
-            deleteMode={deleteMode}
-            visibleFileItems={visibleFileItems}
-            selectedDeleteCount={selectedDeleteCount}
-            trashAction={trashAction}
-            purgeMode={purgeMode}
-            purgeFolderLabel={purgeFolderLabel}
-            moveSelectionMode={moveSelectionMode}
-            moveSourceLabel={moveSourceLabel}
-            moveDestinationLabel={moveDestinationLabel}
-            selectedTrashCount={selectedTrashCount}
-            selectedTrashIds={selectedTrashIds}
-            selectedDeleteIds={selectedDeleteIds}
-            deleteConfirmKey={deleteConfirmKey}
-            deleting={deleting}
-            purgeFolderId={normalizeId(purgeFolderId)}
-            moveSourceId={normalizeId(moveSourceId)}
-            moveDestinationId={normalizeId(moveDestinationId)}
-            recentRenames={recentRenames}
-            renameDrafts={renameDrafts}
-            actionMenuKey={actionMenuKey}
-            editingKey={editingKey}
-            renameNotices={renameNotices}
-            renaming={renaming}
-            downloading={downloading}
-            displayPath={displayPath}
-            formatDateTime={formatDateTime}
-            formatBytes={formatBytes}
-            buildRenamedObjectName={buildRenamedObjectName}
-            getMoveDestinationBlockReason={getMoveDestinationBlockReason}
-            onOpenFolder={handleOpenFolder}
-            onOpenParent={handleOpenParent}
-            onSearchChange={(event) => setSearchQuery(event.target.value)}
-            onSortChange={(event) => setSortMode(event.target.value)}
-            onGroupChange={(event) => setGroupMode(event.target.value)}
-            onToggleSelectAllFilesForDelete={toggleSelectAllFilesForDelete}
-            onSoftDeleteSelected={handleSoftDeleteSelected}
-            onToggleSelectAllTrash={toggleSelectAllTrash}
-            onRestoreTrash={handleRestoreTrash}
-            onDeleteTrash={handleDeleteTrash}
-            onToggleTrashSelection={toggleTrashSelection}
-            onSelectOnlyTrash={selectOnlyTrashItem}
-            onToggleDeleteSelection={toggleDeleteSelection}
-            onDelete={handleDelete}
-            onAskDelete={setDeleteConfirmKey}
-            onCancelDelete={() => setDeleteConfirmKey('')}
-            onTogglePurgeFolder={togglePurgeFolderSelection}
-            onToggleMoveSource={toggleMoveSourceSelection}
-            onToggleMoveDestination={toggleMoveDestinationSelection}
-            onToggleActionMenu={toggleActionMenu}
-            onStartRename={startRename}
-            onRenameDraftChange={updateRenameDraft}
-            onRename={handleRename}
-            onCancelRename={cancelRename}
-            onDownload={handleDownload}
-          />
+          {viewMode === 'files' && contentView === 'tree' ? (
+            <TreePanel
+              tree={treeData}
+              loading={treeLoading}
+              error={treeError}
+              currentFolderId={currentFolderId}
+              scope={treeScope}
+              visibility={treeVisibility}
+              onScopeChange={setTreeScope}
+              onVisibilityChange={setTreeVisibility}
+              onOpenFolder={handleOpenFolder}
+            />
+          ) : null}
+          {viewMode === 'trash' || contentView === 'objects' ? (
+            <ObjectBrowserPanel
+              viewMode={viewMode}
+              visibleItems={visibleItems}
+              totalItemCount={totalItemCount}
+              breadcrumbItems={breadcrumbItems}
+              currentFolderId={currentFolderId}
+              searchQuery={searchQuery}
+              sortMode={sortMode}
+              groupMode={groupMode}
+              loading={loading}
+              error={error}
+              success={success}
+              recentDeletes={recentDeletes}
+              deleteMode={deleteMode}
+              visibleFileItems={visibleFileItems}
+              selectedDeleteCount={selectedDeleteCount}
+              trashAction={trashAction}
+              purgeMode={purgeMode}
+              purgeFolderLabel={purgeFolderLabel}
+              moveSelectionMode={moveSelectionMode}
+              moveSourceLabel={moveSourceLabel}
+              moveDestinationLabel={moveDestinationLabel}
+              selectedTrashCount={selectedTrashCount}
+              selectedTrashIds={selectedTrashIds}
+              selectedDeleteIds={selectedDeleteIds}
+              deleteConfirmKey={deleteConfirmKey}
+              deleting={deleting}
+              purgeFolderId={normalizeId(purgeFolderId)}
+              moveSourceId={normalizeId(moveSourceId)}
+              moveDestinationId={normalizeId(moveDestinationId)}
+              recentRenames={recentRenames}
+              renameDrafts={renameDrafts}
+              actionMenuKey={actionMenuKey}
+              editingKey={editingKey}
+              renameNotices={renameNotices}
+              renaming={renaming}
+              downloading={downloading}
+              displayPath={displayPath}
+              formatDateTime={formatDateTime}
+              formatBytes={formatBytes}
+              buildRenamedObjectName={buildRenamedObjectName}
+              getMoveDestinationBlockReason={getMoveDestinationBlockReason}
+              onOpenFolder={handleOpenFolder}
+              onOpenParent={handleOpenParent}
+              onSearchChange={(event) => setSearchQuery(event.target.value)}
+              onSortChange={(event) => setSortMode(event.target.value)}
+              onGroupChange={(event) => setGroupMode(event.target.value)}
+              onToggleSelectAllFilesForDelete={toggleSelectAllFilesForDelete}
+              onSoftDeleteSelected={handleSoftDeleteSelected}
+              onToggleSelectAllTrash={toggleSelectAllTrash}
+              onRestoreTrash={handleRestoreTrash}
+              onDeleteTrash={handleDeleteTrash}
+              onToggleTrashSelection={toggleTrashSelection}
+              onSelectOnlyTrash={selectOnlyTrashItem}
+              onToggleDeleteSelection={toggleDeleteSelection}
+              onDelete={handleDelete}
+              onAskDelete={setDeleteConfirmKey}
+              onCancelDelete={() => setDeleteConfirmKey('')}
+              onTogglePurgeFolder={togglePurgeFolderSelection}
+              onToggleMoveSource={toggleMoveSourceSelection}
+              onToggleMoveDestination={toggleMoveDestinationSelection}
+              onToggleActionMenu={toggleActionMenu}
+              onStartRename={startRename}
+              onRenameDraftChange={updateRenameDraft}
+              onRename={handleRename}
+              onCancelRename={cancelRename}
+              onDownload={handleDownload}
+            />
+          ) : null}
         </div>
 
         <WorkspaceSidebar

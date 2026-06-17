@@ -105,6 +105,28 @@ class ObjectStorageService:
             "files": trashed_items,
         }
 
+    def get_tree(self, root_folder_id: str = "", include_deleted: bool = False):
+        normalized_root_id = self.normalize_id(root_folder_id)
+        root_folder = self.get_folder(normalized_root_id, require_active=False) if normalized_root_id else None
+
+        if root_folder and root_folder.get("status") not in {self.STATUS_ACTIVE, self.STATUS_DELETED}:
+            raise HTTPException(status_code=404, detail="Folder not found")
+
+        breadcrumbs = self.build_breadcrumbs(root_folder)
+        root_path = self.build_display_prefix(breadcrumbs)
+        root_node = self.build_tree_folder_node(
+            root_folder,
+            include_deleted=include_deleted,
+            base_display_path=root_path,
+            is_virtual_root=not root_folder,
+        )
+
+        return {
+            "root_folder_id": normalized_root_id or "",
+            "include_deleted": bool(include_deleted),
+            "tree": root_node,
+        }
+
     def start_direct_upload(self, file_name: str, file_size: int, file_type: str = "", folder_id: str = ""):
         normalized_file_name = str(file_name or "").strip()
         if not normalized_file_name:
@@ -781,6 +803,68 @@ class ObjectStorageService:
         child_folders.sort(key=lambda item: ((item.get("folder_name") or "").lower(), item.get("folder_id") or ""))
         child_files.sort(key=lambda item: ((item.get("file_name") or "").lower(), item.get("file_id") or ""))
         return child_folders, child_files
+
+    def build_tree_folder_node(
+        self,
+        folder_metadata,
+        *,
+        include_deleted: bool,
+        base_display_path: str,
+        is_virtual_root: bool = False,
+    ):
+        if is_virtual_root:
+            folder_id = ""
+            folder_name = "Root"
+            folder_status = self.STATUS_ACTIVE
+        else:
+            folder_id = folder_metadata["folder_id"]
+            folder_name = folder_metadata["folder_name"]
+            folder_status = str(folder_metadata.get("status") or self.STATUS_ACTIVE)
+
+        child_folders_metadata, child_files_metadata = self.list_direct_children(folder_id)
+        children = []
+
+        for child_folder in child_folders_metadata:
+            status = str(child_folder.get("status") or self.STATUS_ACTIVE)
+            if status not in {self.STATUS_ACTIVE, self.STATUS_DELETED}:
+                continue
+            if not include_deleted and status != self.STATUS_ACTIVE:
+                continue
+            child_path = f"{base_display_path}{child_folder['folder_name']}/"
+            children.append(
+                self.build_tree_folder_node(
+                    child_folder,
+                    include_deleted=include_deleted,
+                    base_display_path=child_path,
+                )
+            )
+
+        for child_file in child_files_metadata:
+            status = str(child_file.get("status") or self.STATUS_ACTIVE)
+            if status not in {self.STATUS_ACTIVE, self.STATUS_DELETED}:
+                continue
+            if not include_deleted and status != self.STATUS_ACTIVE:
+                continue
+            children.append(self.build_tree_file_node(child_file, base_display_path=base_display_path))
+
+        return {
+            "id": folder_id,
+            "kind": "folder",
+            "name": folder_name,
+            "status": folder_status,
+            "path": base_display_path if is_virtual_root else f"{base_display_path}",
+            "children": children,
+        }
+
+    def build_tree_file_node(self, file_metadata, *, base_display_path: str):
+        return {
+            "id": file_metadata["file_id"],
+            "kind": "file",
+            "name": file_metadata["file_name"],
+            "status": str(file_metadata.get("status") or self.STATUS_ACTIVE),
+            "path": f"{base_display_path}{file_metadata['file_name']}",
+            "children": [],
+        }
 
     def move_folder_subtree(
         self,

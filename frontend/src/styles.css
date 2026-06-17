@@ -112,6 +112,10 @@ button:not(:disabled):active {
   min-width: 92px;
 }
 
+.header-view-button {
+  min-width: 88px;
+}
+
 .header-mode-button-active {
   background: linear-gradient(90deg, #3d66d6 0%, #7f4cb8 52%, #c13d5d 100%);
   color: #f8fbff;
@@ -164,6 +168,14 @@ h1 {
 
 .panel-main {
   min-height: calc(100vh - 180px);
+}
+
+.tree-panel {
+  margin-bottom: 14px;
+  background:
+    linear-gradient(135deg, rgba(61, 102, 214, 0.1) 0%, rgba(193, 61, 93, 0.12) 100%),
+    #10161f;
+  border-color: rgba(92, 108, 163, 0.38);
 }
 
 .side-column {
@@ -233,6 +245,204 @@ h1 {
   grid-template-columns: minmax(220px, 1.6fr) repeat(2, minmax(180px, 0.8fr));
   gap: 12px;
   margin-bottom: 14px;
+}
+
+.tree-toolbar {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.tree-toggle-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.tree-note {
+  margin-bottom: 12px;
+}
+
+.tree-shell {
+  max-height: 420px;
+  overflow: auto;
+  padding: 6px 2px 2px;
+}
+
+.tree-list,
+.tree-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.tree-node {
+  min-width: 0;
+}
+
+.tree-node-row {
+  min-height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  position: relative;
+}
+
+.tree-guide-gutter {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  flex-shrink: 0;
+}
+
+.tree-guide-column,
+.tree-guide-branch {
+  width: 18px;
+  position: relative;
+  flex-shrink: 0;
+}
+
+.tree-guide-column-active::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(155, 171, 202, 0.38);
+}
+
+.tree-guide-branch-mid::before,
+.tree-guide-branch-last::before,
+.tree-guide-branch-mid::after,
+.tree-guide-branch-last::after {
+  content: '';
+  position: absolute;
+}
+
+.tree-guide-branch-mid::before {
+  left: 8px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: rgba(155, 171, 202, 0.38);
+}
+
+.tree-guide-branch-last::before {
+  left: 8px;
+  top: 0;
+  height: 50%;
+  width: 1px;
+  background: rgba(155, 171, 202, 0.38);
+}
+
+.tree-guide-branch-mid::after,
+.tree-guide-branch-last::after {
+  left: 8px;
+  top: 50%;
+  width: 10px;
+  height: 1px;
+  background: rgba(155, 171, 202, 0.38);
+}
+
+.tree-expander {
+  width: 24px;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: #141d2b;
+  color: #dce6f3;
+  border: 1px solid #2a3850;
+  padding: 0;
+}
+
+.tree-expander:disabled {
+  opacity: 0.45;
+}
+
+.tree-file-dot {
+  width: 24px;
+  min-width: 24px;
+  text-align: center;
+  color: #8ca0bb;
+  font-size: 0.9rem;
+}
+
+.tree-folder-symbol,
+.tree-file-symbol {
+  flex-shrink: 0;
+}
+
+.tree-node-button,
+.tree-node-file {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 10px;
+  color: #e7eef8;
+}
+
+.tree-node-button {
+  border: 1px solid transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.tree-node-button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.tree-node-button:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.tree-node-button-current {
+  background: linear-gradient(90deg, rgba(61, 102, 214, 0.18) 0%, rgba(193, 61, 93, 0.14) 100%);
+  border-color: rgba(160, 145, 229, 0.34);
+}
+
+.tree-node-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.tree-node-badge {
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  line-height: 1.2;
+}
+
+.tree-node-badge-current {
+  background: linear-gradient(90deg, rgba(61, 102, 214, 0.92) 0%, rgba(193, 61, 93, 0.88) 100%);
+  color: #f8fbff;
+}
+
+.tree-node-badge-deleted {
+  background: rgba(127, 47, 67, 0.22);
+  border: 1px solid rgba(181, 91, 121, 0.36);
+  color: #f6c7d4;
+}
+
+.tree-node-deleted .tree-node-name,
+.tree-node-file-deleted .tree-node-name,
+.tree-node-button-deleted {
+  color: #ca9fb0;
+}
+
+.tree-node-current > .tree-node-row > .tree-expander {
+  border-color: rgba(157, 172, 255, 0.4);
+}
+
+.tree-message-box {
+  margin-bottom: 0;
 }
 
 .control-field {

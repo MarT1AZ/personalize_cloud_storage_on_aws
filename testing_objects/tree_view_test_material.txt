@@ -1,0 +1,146 @@
+Tree View + Tree Navigation Test Cases
+
+1. Default object view on login
+- Start from a fresh login on root.
+- Expect `Objects` view active.
+- Expect current folder object list is visible.
+- Expect tree panel is not visible.
+(done)
+
+2. Switch from objects to tree
+- Click `Tree`.
+- Expect `Tree` button becomes active.
+- Expect object list is hidden.
+- Expect tree panel is shown.
+- Expect tree data loads only after entering tree view.
+(done) expecting tree to have delay on loading which is fine
+
+3. Switch from tree back to objects
+- From tree view, click `Objects`.
+- Expect `Objects` button becomes active.
+- Expect tree panel is hidden.
+- Expect current folder object list is shown again.
+(done) (note) also no delay is expected and it has no delay so gud
+
+4. Root tree with active only
+- In tree view, choose `Root tree`.
+- Choose `Active only`.
+- Expect only active folders/files are shown.
+- Expect deleted folders/files are hidden.
+(done) (q/a) do you think it is better to fetch both state, but show only active if user click on active only
+or keep it seperate fetch
+
+5. Root tree with all states
+- In tree view, choose `Root tree`.
+- Choose `All states`.
+- Expect deleted folders/files are visible.
+- Expect deleted nodes are visually marked as deleted.
+(done) (note) had to scroll down lol
+
+6. Current folder subtree focus
+- Open a nested folder in object view, for example `root/f2/f5`.
+- Switch to tree view.
+- Choose `Current folder`.
+- Expect tree starts from `f5` as the root of the shown subtree.
+- Expect parent folders above `f5` are not shown in this focused subtree mode.
+(done)  (note) had to scroll down lol lmao
+
+7. Tree folder navigation
+- In tree view, click an active folder that is not the current one.
+- Expect current folder changes to that folder.
+- Expect breadcrumb path updates behind the scenes.
+- If still in tree view and scope is `Current folder`, expect tree reloads around that folder.
+(done)
+
+8. Tree navigation back to objects
+- While in tree view, click an active folder.
+- Then click `Objects`.
+- Expect object list opens at the folder selected from tree view.
+(done)
+
+9. Deleted folder in all states
+- Make sure a deleted folder exists in tree data.
+- Open tree view with `All states`.
+- Expect deleted folder is shown with deleted styling.
+- Expect clicking deleted folder does not navigate.
+(done) 
+
+10. Deleted file in all states
+- Make sure a deleted file exists under some folder.
+- Open tree view with `All states`.
+- Expect deleted file is visible and marked deleted.
+- Expect deleted file is display only, no folder navigation behavior.
+(done)
+
+
+11. Expand and collapse folders
+- In tree view, use the expand/collapse control on a folder with children.
+- Expect children hide and show correctly.
+- Expect leaf folders without children do not expand.
+(done)
+
+12. Refresh behavior in objects view
+- Stay in `Objects` view.
+- Click `Refresh`.
+- Expect only current folder content reloads.
+- Expect tree panel is still hidden.
+- Expect no tree loading UI appears.
+(done)
+
+13. Refresh behavior in tree view
+- Stay in `Tree` view.
+- Click `Refresh`.
+- Expect tree reloads using current tree scope and visibility settings.
+- Expect object list stays hidden.
+(done)
+
+14. Upload while using objects view
+- In `Objects` view, upload a file into the current folder.
+- Expect uploaded file appears in object list.
+- Switch to `Tree`.
+- Expect tree includes the uploaded file in the correct folder.
+(done)
+
+15. Create folder while using objects view
+- In `Objects` view, create a new folder in the current folder.
+- Expect folder appears in object list.
+- Switch to `Tree`.
+- Expect folder appears in the correct place in the tree.
+(done)
+
+16. Soft delete active file and verify tree filters
+- Soft delete one file from object view.
+- In tree view with `Active only`, expect the deleted file is hidden.
+- In tree view with `All states`, expect the deleted file is shown and marked deleted.
+(done)
+
+17. Root-level folder symbol
+- In object view, inspect a folder row.
+- Expect folder uses the folder symbol.
+- In tree view, inspect a folder node.
+- Expect folder uses the folder symbol there as well.
+(done)
+
+18. Trash mode isolation
+- Enter `View Trash`.
+- Expect `Objects`/`Tree` swap is not usable while in trash mode.
+- Expect tree panel is not shown.
+- Exit trash.
+- Expect app returns to normal file browsing flow.
+(done)
+
+19. Move mode should not overlap with tree view
+- Enter `Tree` view.
+- Try to use move-related controls from the top bar.
+- Expect file-action modes are disabled or unavailable while tree view is active.
+- Switch back to `Objects`.
+- Expect file-action modes become usable again.
+(done)
+
+20. Purge mode should not overlap with tree view
+- Enter `Tree` view.
+- Try to use purge-related controls from the top bar.
+- Expect purge mode is disabled or unavailable while tree view is active.
+- Switch back to `Objects`.
+- Expect purge mode becomes usable again.
+(done)

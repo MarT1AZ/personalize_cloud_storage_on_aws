@@ -102,6 +102,15 @@ def list_trash(
     return storage_service.list_trashed_files()
 
 
+@app.get("/api/tree")
+def get_tree(
+    root_folder_id: str = "",
+    include_deleted: bool = False,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.get_tree(root_folder_id=root_folder_id, include_deleted=include_deleted)
+
+
 @app.post("/api/upload/init")
 def upload_init(
     request: UploadInitRequest,

@@ -66,7 +66,7 @@ function FolderRow({
     <li className={`file-row folder-row${isMoveSource ? ' move-source-row' : ''}${isMoveDestination ? ' move-destination-row' : ''}`} key={item.file_id}>
       <div className="folder-row-shell">
         <button className="folder-open-button" onClick={() => onOpenFolder(item.file_id)} type="button">
-          <span className="folder-icon" aria-hidden="true">DIR</span>
+          <span className="folder-icon" aria-hidden="true">📁</span>
           <span className="folder-label">{item.name}</span>
           <span className="folder-path">{item.path}</span>
         </button>
@@ -462,7 +462,7 @@ export default function ObjectBrowserPanel(props) {
           {viewMode === 'files' && currentFolderId ? (
             <li className="file-row folder-row folder-up-row">
               <button className="folder-open-button" onClick={onOpenParent} type="button">
-                <span className="folder-icon" aria-hidden="true">DIR</span>
+                <span className="folder-icon" aria-hidden="true">📁</span>
                 <span className="folder-label">..</span>
               </button>
             </li>

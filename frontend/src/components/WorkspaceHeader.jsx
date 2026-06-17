@@ -1,11 +1,13 @@
 export default function WorkspaceHeader({
   authUser,
   viewMode,
+  contentView,
   deleteMode,
   moveSelectionMode,
   purgeMode,
   refreshing,
   loading,
+  onSwitchContentView,
   onToggleDeleteMode,
   onToggleMoveSelectionMode,
   onTogglePurgeMode,
@@ -14,6 +16,9 @@ export default function WorkspaceHeader({
   onLogout,
 }) {
   const trashActive = viewMode === 'trash';
+  const filesViewActive = viewMode === 'files' && contentView === 'objects';
+  const treeViewActive = viewMode === 'files' && contentView === 'tree';
+  const fileActionDisabled = viewMode === 'trash' || contentView === 'tree';
 
   return (
     <section className="header-row">
@@ -25,9 +30,25 @@ export default function WorkspaceHeader({
       <div className="header-actions">
         <div className="session-badge">Signed in as {authUser.username}</div>
         <button
+          className={filesViewActive ? 'header-mode-button header-mode-button-active' : 'header-mode-button secondary-button'}
+          onClick={() => onSwitchContentView('objects')}
+          disabled={viewMode === 'trash'}
+          type="button"
+        >
+          Objects
+        </button>
+        <button
+          className={treeViewActive ? 'header-mode-button header-mode-button-active' : 'header-mode-button secondary-button'}
+          onClick={() => onSwitchContentView('tree')}
+          disabled={viewMode === 'trash'}
+          type="button"
+        >
+          Tree
+        </button>
+        <button
           className={deleteMode ? 'header-mode-button header-mode-button-active' : 'header-mode-button secondary-button'}
           onClick={onToggleDeleteMode}
-          disabled={viewMode === 'trash'}
+          disabled={fileActionDisabled}
           type="button"
         >
           {deleteMode ? 'Exit Delete' : 'Delete'}
@@ -35,7 +56,7 @@ export default function WorkspaceHeader({
         <button
           className={moveSelectionMode ? 'header-mode-button header-mode-button-active' : 'header-mode-button secondary-button'}
           onClick={onToggleMoveSelectionMode}
-          disabled={viewMode === 'trash'}
+          disabled={fileActionDisabled}
           type="button"
         >
           {moveSelectionMode ? 'Exit Move' : 'Move'}
@@ -43,7 +64,7 @@ export default function WorkspaceHeader({
         <button
           className={purgeMode ? 'header-mode-button header-mode-button-active' : 'header-mode-button secondary-button'}
           onClick={onTogglePurgeMode}
-          disabled={viewMode === 'trash'}
+          disabled={fileActionDisabled}
           type="button"
         >
           {purgeMode ? 'Exit Purge' : 'Purge'}
