@@ -1356,18 +1356,11 @@ export default function App() {
             onFileChange: handleSelectedFileChange,
             onSubmit: handleUpload,
           }}
-          deleteById={{
-            value: deleteObjectId,
-            submitting: deleting,
-            onChange: (event) => setDeleteObjectId(event.target.value),
-            onSubmit: () => handleDelete(deleteObjectId),
-          }}
           purgeControls={{
             folderId: purgeFolderId,
             folderLabel: purgeFolderLabel,
             state: purgeState,
             running: purging,
-            onFolderIdChange: (event) => setPurgeFolderId(event.target.value),
             onStart: () => handlePurge(),
             onResume: () => handlePurge({ resume: true }),
           }}
@@ -1379,8 +1372,6 @@ export default function App() {
             destinationLabel: moveDestinationLabel,
             state: moveState,
             running: moveRunning,
-            onSourceIdChange: (event) => setMoveSourceId(event.target.value),
-            onDestinationIdChange: (event) => setMoveDestinationId(event.target.value),
             onUseCurrentFolderAsDestination: useCurrentFolderAsMoveDestination,
             onStartMerge: () => handleMoveOperation('merge'),
             onStartAvoidConflict: () => handleMoveOperation('avoid_conflict'),

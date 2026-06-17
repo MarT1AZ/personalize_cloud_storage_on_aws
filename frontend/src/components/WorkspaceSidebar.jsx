@@ -3,7 +3,6 @@ export default function WorkspaceSidebar({
   currentPath,
   folderForm,
   uploadForm,
-  deleteById,
   purgeControls,
   moveControls,
   trashControls,
@@ -15,23 +14,23 @@ export default function WorkspaceSidebar({
     <aside className="side-column">
       {viewMode === 'files' ? (
         <>
-          <section className="panel side-panel">
+          <section className="panel side-panel sidebar-panel">
             <div className="section-head">
-              <h2>Create folder</h2>
+              <h2>New folder</h2>
             </div>
             <form className="stack-form" onSubmit={folderForm.onSubmit}>
               <label className="field">
                 <span>Folder name</span>
                 <input type="text" value={folderForm.value} onChange={folderForm.onChange} placeholder="new-folder" />
               </label>
-              <div className="helper-text">Final folder: {buildFolderPreview(currentPath, folderForm.value) || '/'}</div>
+              <div className="sidebar-note">Path: {buildFolderPreview(currentPath, folderForm.value) || '/'}</div>
               <button className="primary-button" type="submit" disabled={!normalizeKey(folderForm.value) || folderForm.submitting}>
-                {folderForm.submitting ? 'Creating...' : 'Create folder'}
+                {folderForm.submitting ? 'Creating...' : 'Create'}
               </button>
             </form>
           </section>
 
-          <section className="panel side-panel">
+          <section className="panel side-panel sidebar-panel">
             <div className="section-head">
               <h2>Upload</h2>
             </div>
@@ -40,154 +39,111 @@ export default function WorkspaceSidebar({
                 <span>Select file</span>
                 <input type="file" onChange={uploadForm.onFileChange} />
               </label>
-              <div className="helper-text">Current folder: {currentPath || '/'}</div>
-              <div className="helper-text">Maximum file size: 1GB</div>
+              <div className="sidebar-note">To: {currentPath || '/'}</div>
+              <div className="sidebar-note">Limit: 1GB</div>
               <button className="primary-button" type="submit" disabled={!uploadForm.selectedFile || uploadForm.submitting}>
                 {uploadForm.submitting ? 'Uploading...' : 'Upload'}
               </button>
             </form>
           </section>
 
-          <section className="panel side-panel">
+          <section className="panel side-panel operation-tool-panel sidebar-panel sidebar-panel-purge">
             <div className="section-head">
-              <h2>Delete by id</h2>
+              <h2>Purge folder</h2>
             </div>
             <div className="stack-form">
-              <label className="field">
-                <span>File id</span>
-                <input type="text" value={deleteById.value} onChange={deleteById.onChange} placeholder="uuid" />
-              </label>
-              <button className="danger-button" onClick={deleteById.onSubmit} disabled={!normalizeId(deleteById.value) || deleteById.submitting} type="button">
-                {deleteById.submitting && normalizeId(deleteById.value) === deleteById.submitting ? 'Deleting...' : 'Delete'}
-              </button>
-            </div>
-          </section>
-
-          <section className="panel side-panel operation-tool-panel">
-            <div className="section-head">
-              <h2>Subtree purge</h2>
-            </div>
-            <div className="stack-form">
-              <div className="operation-chip-row">
-                <span className="operation-chip operation-chip-blue">DFS</span>
-                <span className="operation-chip operation-chip-red">DB + S3 purge</span>
-              </div>
-              <label className="field">
-                <span>Folder id</span>
-                <input
-                  type="text"
-                  value={purgeControls.folderId}
-                  onChange={purgeControls.onFolderIdChange}
-                  placeholder="folder id"
-                />
-              </label>
-              <div className="helper-text">
-                Deletes the selected folder subtree permanently from DynamoDB and S3. Files and empty folders are marked
-                `deletion_pending` before removal.
-              </div>
+              <div className="sidebar-note">Turn on purge mode, then select one folder from the list.</div>
               {purgeControls.folderLabel ? (
-                <div className="operation-status">
-                  <div>Selected folder: {purgeControls.folderLabel}</div>
-                  <div>Selected id: {purgeControls.folderId}</div>
-                </div>
-              ) : null}
-              {purgeControls.state.purge_active ? (
-                <div className="operation-status">
-                  <div>In progress: {purgeControls.state.root_id || 'unknown root'}</div>
-                  <div>Phase: {purgeControls.state.phase || 'deleting'}</div>
+                <div className="sidebar-status-card sidebar-status-card-purge">
+                  <div className="sidebar-status-title">Selected folder</div>
+                  <div>{purgeControls.folderLabel}</div>
+                  <div className="sidebar-note">{purgeControls.folderId}</div>
                 </div>
               ) : (
-                <div className="operation-status operation-status-idle">No purge is active.</div>
+                <div className="sidebar-status-card sidebar-status-idle">No folder selected yet.</div>
               )}
-              <button className="accent-danger-button" onClick={purgeControls.onStart} disabled={!normalizeId(purgeControls.folderId) || purgeControls.running} type="button">
-                {purgeControls.running ? 'Deleting subtree...' : 'Start subtree purge'}
+              {purgeControls.state.purge_active ? (
+                <div className="sidebar-status-card sidebar-status-card-purge">
+                  <div className="sidebar-status-title">Purge running</div>
+                  <div>{purgeControls.state.root_id || 'unknown root'}</div>
+                  <div className="sidebar-note">Phase: {purgeControls.state.phase || 'deleting'}</div>
+                </div>
+              ) : (
+                <div className="sidebar-status-card sidebar-status-idle">Idle</div>
+              )}
+              <button className="danger-button" onClick={purgeControls.onStart} disabled={!normalizeId(purgeControls.folderId) || purgeControls.running} type="button">
+                {purgeControls.running ? 'Purging...' : 'Start purge'}
               </button>
               <button className="secondary-button" onClick={purgeControls.onResume} disabled={!purgeControls.state.purge_active || purgeControls.running} type="button">
-                {purgeControls.running ? 'Resuming...' : 'Resume pending purge'}
+                {purgeControls.running ? 'Resuming...' : 'Resume'}
               </button>
             </div>
           </section>
 
-          <section className="panel side-panel operation-tool-panel">
+          <section className="panel side-panel operation-tool-panel sidebar-panel sidebar-panel-move">
             <div className="section-head">
               <h2>Move</h2>
             </div>
             <div className="stack-form">
-              <div className="operation-chip-row">
-                <span className="operation-chip operation-chip-blue">DFS copy</span>
-                <span className="operation-chip operation-chip-red">Move + purge</span>
-              </div>
-              <label className="field">
-                <span>Source id</span>
-                <input
-                  type="text"
-                  value={moveControls.sourceId}
-                  onChange={moveControls.onSourceIdChange}
-                  placeholder="file or folder id"
-                />
-              </label>
-              <label className="field">
-                <span>Destination folder id</span>
-                <input
-                  type="text"
-                  value={moveControls.destinationId}
-                  onChange={moveControls.onDestinationIdChange}
-                  placeholder="folder id or empty for root"
-                />
-              </label>
-              <div className="helper-text">
-                Mark source and destination from the list, or type the ids directly. Source can be a file or folder.
-              </div>
+              <div className="sidebar-note">Turn on move mode, then pick one source and one destination from the list.</div>
               <button
                 className="secondary-button"
                 onClick={moveControls.onUseCurrentFolderAsDestination}
                 disabled={!!getCurrentFolderMoveBlockReason()}
                 type="button"
               >
-                {getCurrentFolderMoveBlockReason() ? `${getCurrentFolderMoveBlockReason()} destination` : 'Use current folder as destination'}
+                {getCurrentFolderMoveBlockReason() ? getCurrentFolderMoveBlockReason() : 'Use current folder'}
               </button>
-              {moveControls.sourceLabel ? (
-                <div className="operation-status">
-                  <div>Source: {moveControls.sourceLabel}</div>
-                  <div>Kind: {moveControls.sourceKind || 'unknown'}</div>
-                  <div>Id: {moveControls.sourceId}</div>
-                </div>
-              ) : null}
-              {moveControls.destinationLabel ? (
-                <div className="operation-status">
-                  <div>Destination: {moveControls.destinationLabel}</div>
-                  <div>Id: {moveControls.destinationId || '__root__'}</div>
-                </div>
-              ) : null}
+              <div className="sidebar-status-grid">
+                {moveControls.sourceLabel ? (
+                  <div className="sidebar-status-card sidebar-status-card-move">
+                    <div className="sidebar-status-title">Source</div>
+                    <div>{moveControls.sourceLabel}</div>
+                    <div className="sidebar-note">{`${moveControls.sourceKind || 'unknown'} | ${moveControls.sourceId}`}</div>
+                  </div>
+                ) : (
+                  <div className="sidebar-status-card sidebar-status-idle">No source selected yet.</div>
+                )}
+                {moveControls.destinationLabel ? (
+                  <div className="sidebar-status-card sidebar-status-card-move">
+                    <div className="sidebar-status-title">Destination</div>
+                    <div>{moveControls.destinationLabel}</div>
+                    <div className="sidebar-note">{moveControls.destinationId || '__root__'}</div>
+                  </div>
+                ) : (
+                  <div className="sidebar-status-card sidebar-status-idle">No destination selected yet.</div>
+                )}
+              </div>
               {moveControls.state.move_active ? (
-                <div className="operation-status">
-                  <div>In progress: {moveControls.state.source_id || 'unknown source'}</div>
-                  <div>Kind: {moveControls.state.source_kind || 'unknown'}</div>
-                  <div>Mode: {moveControls.state.mode || 'merge'}</div>
-                  <div>Phase: {moveControls.state.phase || 'copying'}</div>
+                <div className="sidebar-status-card sidebar-status-card-move">
+                  <div className="sidebar-status-title">Move running</div>
+                  <div>{moveControls.state.source_id || 'unknown source'}</div>
+                  <div className="sidebar-note">{`${moveControls.state.source_kind || 'unknown'} | ${moveControls.state.mode || 'merge'} | ${moveControls.state.phase || 'copying'}`}</div>
                 </div>
               ) : (
-                <div className="operation-status operation-status-idle">No move is active.</div>
+                <div className="sidebar-status-card sidebar-status-idle">Idle</div>
               )}
-              <button className="accent-danger-button" onClick={moveControls.onStartMerge} disabled={!normalizeId(moveControls.sourceId) || moveControls.running} type="button">
-                {moveControls.running ? 'Moving...' : 'Start merge move'}
-              </button>
-              <button className="secondary-button" onClick={moveControls.onStartAvoidConflict} disabled={!normalizeId(moveControls.sourceId) || moveControls.running} type="button">
-                {moveControls.running ? 'Preparing...' : 'Start avoid-conflict move'}
-              </button>
-              <button className="secondary-button" onClick={moveControls.onResume} disabled={!moveControls.state.move_active || moveControls.running} type="button">
-                {moveControls.running ? 'Resuming...' : 'Resume pending move'}
-              </button>
+              <div className="sidebar-button-stack">
+                <button className="primary-button" onClick={moveControls.onStartMerge} disabled={!normalizeId(moveControls.sourceId) || moveControls.running} type="button">
+                  {moveControls.running ? 'Moving...' : 'Merge move'}
+                </button>
+                <button className="secondary-button" onClick={moveControls.onStartAvoidConflict} disabled={!normalizeId(moveControls.sourceId) || moveControls.running} type="button">
+                  {moveControls.running ? 'Preparing...' : 'Avoid conflict'}
+                </button>
+                <button className="secondary-button" onClick={moveControls.onResume} disabled={!moveControls.state.move_active || moveControls.running} type="button">
+                  {moveControls.running ? 'Resuming...' : 'Resume'}
+                </button>
+              </div>
             </div>
           </section>
         </>
       ) : (
-        <section className="panel side-panel">
+        <section className="panel side-panel sidebar-panel">
           <div className="section-head">
             <h2>Trash actions</h2>
           </div>
           <div className="stack-form">
-            <div className="helper-text">Selected files restore to their old parent folder. If that folder no longer exists, they go into `/restored/`.</div>
+            <div className="sidebar-note">Restore goes back to the original folder when possible.</div>
             <button className="secondary-button" onClick={trashControls.onRestore} disabled={trashControls.selectedCount === 0 || !!trashControls.action} type="button">
               {trashControls.action === 'restore' ? 'Restoring...' : `Restore selected (${trashControls.selectedCount})`}
             </button>
@@ -198,10 +154,7 @@ export default function WorkspaceSidebar({
         </section>
       )}
 
-      <section className="panel side-panel panel-muted">
-        <div className="section-head">
-          <h2>Session</h2>
-        </div>
+      <section className="panel side-panel panel-muted sidebar-panel sidebar-session-panel">
         <p className="subtle panel-note">Your login stays active after reload until you log out or the token expires.</p>
       </section>
     </aside>

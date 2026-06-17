@@ -13,6 +13,8 @@ export default function WorkspaceHeader({
   onRefresh,
   onLogout,
 }) {
+  const trashActive = viewMode === 'trash';
+
   return (
     <section className="header-row">
       <div>
@@ -23,7 +25,7 @@ export default function WorkspaceHeader({
       <div className="header-actions">
         <div className="session-badge">Signed in as {authUser.username}</div>
         <button
-          className={deleteMode ? 'danger-button' : 'secondary-button'}
+          className={deleteMode ? 'header-mode-button header-mode-button-active' : 'header-mode-button secondary-button'}
           onClick={onToggleDeleteMode}
           disabled={viewMode === 'trash'}
           type="button"
@@ -31,7 +33,7 @@ export default function WorkspaceHeader({
           {deleteMode ? 'Exit Delete' : 'Delete'}
         </button>
         <button
-          className={moveSelectionMode ? 'accent-danger-button' : 'secondary-button'}
+          className={moveSelectionMode ? 'header-mode-button header-mode-button-active' : 'header-mode-button secondary-button'}
           onClick={onToggleMoveSelectionMode}
           disabled={viewMode === 'trash'}
           type="button"
@@ -39,7 +41,7 @@ export default function WorkspaceHeader({
           {moveSelectionMode ? 'Exit Move' : 'Move'}
         </button>
         <button
-          className={purgeMode ? 'accent-danger-button' : 'secondary-button'}
+          className={purgeMode ? 'header-mode-button header-mode-button-active' : 'header-mode-button secondary-button'}
           onClick={onTogglePurgeMode}
           disabled={viewMode === 'trash'}
           type="button"
@@ -47,11 +49,11 @@ export default function WorkspaceHeader({
           {purgeMode ? 'Exit Purge' : 'Purge'}
         </button>
         <button
-          className={viewMode === 'trash' ? 'danger-button' : 'secondary-button'}
+          className={trashActive ? 'header-mode-button header-mode-button-active' : 'header-mode-button secondary-button'}
           onClick={onToggleTrashView}
           type="button"
         >
-          {viewMode === 'trash' ? 'Exit Trash' : 'View Trash'}
+          {trashActive ? 'Exit Trash' : 'View Trash'}
         </button>
         <button className="secondary-button" onClick={onRefresh} disabled={refreshing || loading} type="button">
           {refreshing ? 'Refreshing...' : 'Refresh'}
