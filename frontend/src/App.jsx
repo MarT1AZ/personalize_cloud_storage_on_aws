@@ -1,4 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
+import LoginScreen from './components/LoginScreen';
+import ObjectBrowserPanel from './components/ObjectBrowserPanel';
+import WorkspaceHeader from './components/WorkspaceHeader';
+import WorkspaceSidebar from './components/WorkspaceSidebar';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api';
 const AUTH_TOKEN_KEY = 'pcs_auth_token';
@@ -1133,740 +1137,268 @@ export default function App() {
     }
   }
 
+  function toggleDeleteMode() {
+    if (viewMode === 'trash') {
+      return;
+    }
+    setDeleteConfirmKey('');
+    setSelectedDeleteIds({});
+    setPurgeMode(false);
+    setMoveSelectionMode(false);
+    setPurgeFolderId('');
+    setPurgeFolderLabel('');
+    setDeleteMode((current) => !current);
+  }
+
+  function toggleTrashView() {
+    setDeleteConfirmKey('');
+    setDeleteMode(false);
+    setPurgeMode(false);
+    setMoveSelectionMode(false);
+    setPurgeFolderId('');
+    setPurgeFolderLabel('');
+    if (viewMode === 'trash') {
+      loadFiles('', false, true, true);
+    } else {
+      loadTrash();
+    }
+  }
+
+  function refreshCurrentView() {
+    if (viewMode === 'trash') {
+      loadTrash(true);
+      return;
+    }
+    loadFiles(currentFolderId, true);
+  }
+
+  function selectOnlyTrashItem(fileId) {
+    setSelectedTrashIds({ [fileId]: true });
+    setDeleteConfirmKey('');
+  }
+
+  function togglePurgeFolderSelection(item) {
+    const itemId = normalizeId(item?.path || item?.name || item?.file_id);
+    if (normalizeId(purgeFolderId) === normalizeId(item.file_id)) {
+      setPurgeFolderId('');
+      setPurgeFolderLabel('');
+      setSuccess(`Cleared purge selection for ${item.path || item.name || item.file_id}.`);
+      setError('');
+      return;
+    }
+    selectFolderForPurge(item);
+  }
+
+  function toggleMoveSourceSelection(item) {
+    const sourceId = normalizeId(item?.file_id || item?.folder_id);
+    if (normalizeId(moveSourceId) === sourceId) {
+      setMoveSourceId('');
+      setMoveSourceLabel('');
+      setMoveSourceKind('');
+      setSuccess(`Cleared move source for ${item.path || item.name || item.file_id}.`);
+      setError('');
+      return;
+    }
+    selectItemForMoveSource(item);
+  }
+
+  function toggleMoveDestinationSelection(item) {
+    const destinationId = normalizeId(item?.file_id || item?.folder_id);
+    if (normalizeId(moveDestinationId) === destinationId) {
+      setMoveDestinationId('');
+      setMoveDestinationLabel('');
+      setSuccess(`Cleared move destination for ${item.path || item.name || item.file_id}.`);
+      setError('');
+      return;
+    }
+    selectFolderForMoveDestination(item);
+  }
+
+  function toggleActionMenu(itemId) {
+    setActionMenuKey((current) => (current === itemId ? '' : itemId));
+  }
+
+  function startRename(itemId) {
+    setEditingKey(itemId);
+    setActionMenuKey('');
+  }
+
+  function updateRenameDraft(itemId, value) {
+    setRenameDrafts((current) => ({ ...current, [itemId]: value }));
+  }
+
+  function cancelRename(itemId) {
+    setEditingKey('');
+    setRenameNotices((current) => ({ ...current, [itemId]: null }));
+  }
+
   if (authChecking) {
-    return (
-      <main className="login-shell">
-        <section className="panel login-card">
-          <p className="eyebrow">Personal cloud storage</p>
-          <h1>Checking session</h1>
-          <p className="subtle">Please wait while we restore your access.</p>
-        </section>
-      </main>
-    );
+    return <LoginScreen authChecking />;
   }
 
   if (!authUser || !authToken) {
     return (
-      <main className="login-shell">
-        <section className="panel login-card">
-          <p className="eyebrow">Personal cloud storage</p>
-          <h1>Log in</h1>
-          <p className="subtle">Use your username and password to open the file manager.</p>
-          {authError ? <div className="error-box">{authError}</div> : null}
-          <form className="stack-form" onSubmit={handleLogin}>
-            <label className="field">
-              <span>Username</span>
-              <input type="text" value={loginUsername} onChange={(event) => setLoginUsername(event.target.value)} autoComplete="username" placeholder="marz" />
-            </label>
-            <label className="field">
-              <span>Password</span>
-              <input type="password" value={loginPassword} onChange={(event) => setLoginPassword(event.target.value)} autoComplete="current-password" placeholder="Enter password" />
-            </label>
-            <button className="primary-button" type="submit" disabled={!loginUsername.trim() || !loginPassword || loginSubmitting}>
-              {loginSubmitting ? 'Logging in...' : 'Log in'}
-            </button>
-          </form>
-        </section>
-      </main>
+      <LoginScreen
+        authChecking={false}
+        authError={authError}
+        loginUsername={loginUsername}
+        loginPassword={loginPassword}
+        loginSubmitting={loginSubmitting}
+        onUsernameChange={(event) => setLoginUsername(event.target.value)}
+        onPasswordChange={(event) => setLoginPassword(event.target.value)}
+        onSubmit={handleLogin}
+      />
     );
   }
 
   return (
     <main className="app-shell">
-      <section className="header-row">
-        <div>
-          <p className="eyebrow">Personal cloud storage</p>
-          <h1>Files</h1>
-          <p className="subtle">Browse folders, open nested paths, and manage files from one simple screen.</p>
-        </div>
-        <div className="header-actions">
-          <div className="session-badge">Signed in as {authUser.username}</div>
-          <button
-            className={deleteMode ? 'danger-button' : 'secondary-button'}
-            onClick={() => {
-              if (viewMode === 'trash') {
-                return;
-              }
-              setDeleteConfirmKey('');
-              setSelectedDeleteIds({});
-              setPurgeMode(false);
-              setMoveSelectionMode(false);
-              setPurgeFolderId('');
-              setPurgeFolderLabel('');
-              setDeleteMode((current) => !current);
-            }}
-            disabled={viewMode === 'trash'}
-            type="button"
-          >
-            {deleteMode ? 'Exit Delete' : 'Delete'}
-          </button>
-          <button
-            className={moveSelectionMode ? 'accent-danger-button' : 'secondary-button'}
-            onClick={toggleMoveSelectionMode}
-            disabled={viewMode === 'trash'}
-            type="button"
-          >
-            {moveSelectionMode ? 'Exit Move' : 'Move'}
-          </button>
-          <button
-            className={purgeMode ? 'accent-danger-button' : 'secondary-button'}
-            onClick={togglePurgeMode}
-            disabled={viewMode === 'trash'}
-            type="button"
-          >
-            {purgeMode ? 'Exit Purge' : 'Purge'}
-          </button>
-          <button
-            className={viewMode === 'trash' ? 'danger-button' : 'secondary-button'}
-            onClick={() => {
-              setDeleteConfirmKey('');
-              setDeleteMode(false);
-              setPurgeMode(false);
-              setMoveSelectionMode(false);
-              setPurgeFolderId('');
-              setPurgeFolderLabel('');
-              if (viewMode === 'trash') {
-                loadFiles('', false, true, true);
-              } else {
-                loadTrash();
-              }
-            }}
-            type="button"
-          >
-            {viewMode === 'trash' ? 'Exit Trash' : 'View Trash'}
-          </button>
-          <button
-            className="secondary-button"
-            onClick={() => (viewMode === 'trash' ? loadTrash(true) : loadFiles(currentFolderId, true))}
-            disabled={refreshing || loading}
-            type="button"
-          >
-            {refreshing ? 'Refreshing...' : 'Refresh'}
-          </button>
-          <button className="ghost-button" onClick={handleLogout} type="button">Log out</button>
-        </div>
-      </section>
+      <WorkspaceHeader
+        authUser={authUser}
+        viewMode={viewMode}
+        deleteMode={deleteMode}
+        moveSelectionMode={moveSelectionMode}
+        purgeMode={purgeMode}
+        refreshing={refreshing}
+        loading={loading}
+        onToggleDeleteMode={toggleDeleteMode}
+        onToggleMoveSelectionMode={toggleMoveSelectionMode}
+        onTogglePurgeMode={togglePurgeMode}
+        onToggleTrashView={toggleTrashView}
+        onRefresh={refreshCurrentView}
+        onLogout={handleLogout}
+      />
 
       <section className="workspace-grid">
         <div className="main-column">
-          <section className="panel panel-main">
-            <div className="section-head">
-              <h2>{viewMode === 'trash' ? 'Trash' : 'Objects'}</h2>
-              <span className="count">
-                {visibleItems.length === totalItemCount ? `${totalItemCount} items` : `${visibleItems.length} of ${totalItemCount} items`}
-              </span>
-            </div>
-
-            {viewMode === 'trash' ? (
-              <div className="helper-text">Trashed files stay here until you restore them or delete them forever.</div>
-            ) : (
-              <div className="breadcrumbs" aria-label="Folder path">
-                {breadcrumbItems.map((item) => (
-                  <button
-                    key={item.folder_id || 'root'}
-                    className={item.folder_id === currentFolderId ? 'breadcrumb-current' : 'breadcrumb-link'}
-                    disabled={item.folder_id === currentFolderId}
-                    onClick={() => handleOpenFolder(item.folder_id)}
-                    type="button"
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            <div className="list-controls">
-              <label className="field control-field">
-                <span>Search</span>
-                <input type="text" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="Search this folder" />
-              </label>
-              <label className="field control-field">
-                <span>Sort</span>
-                <select value={sortMode} onChange={(event) => setSortMode(event.target.value)}>
-                  <option value="alpha-asc">Alphabet (A to Z)</option>
-                  <option value="alpha-desc">Alphabet (Z to A)</option>
-                  <option value="modified-newest">Newest modified</option>
-                  <option value="modified-oldest">Oldest modified</option>
-                </select>
-              </label>
-              <label className="field control-field">
-                <span>Group</span>
-                <select value={groupMode} onChange={(event) => setGroupMode(event.target.value)}>
-                  <option value="folder-first">Folder first</option>
-                  <option value="file-first">File first</option>
-                </select>
-              </label>
-            </div>
-
-            {error ? <div className="error-box">{error}</div> : null}
-            {success ? <div className="success-box">{success}</div> : null}
-            {recentDeletes.length > 0 ? (
-              <div className="delete-history-box">
-                <div className="delete-history-title">Recently deleted</div>
-                <div className="delete-history-list">
-                  {recentDeletes.map((item) => <div className="delete-tag" key={item}>{item}</div>)}
-                </div>
-              </div>
-            ) : null}
-            {viewMode === 'files' && deleteMode ? (
-              <div className="delete-history-box">
-                <div className="delete-history-title">Delete selection</div>
-                <div className="delete-history-list">
-                  <button className="secondary-button" onClick={toggleSelectAllFilesForDelete} disabled={visibleFileItems.length === 0 || !!trashAction} type="button">
-                    {selectedDeleteCount === visibleFileItems.length && visibleFileItems.length > 0 ? 'Clear visible files' : 'Select visible files'}
-                  </button>
-                  <button className="danger-button" onClick={handleSoftDeleteSelected} disabled={selectedDeleteCount === 0 || !!trashAction} type="button">
-                    {trashAction === 'soft-delete' ? 'Moving...' : `Move selected to trash (${selectedDeleteCount})`}
-                  </button>
-                </div>
-              </div>
-            ) : null}
-            {viewMode === 'files' && purgeMode ? (
-              <div className="delete-history-box operation-box">
-                <div className="delete-history-title">Purge selection</div>
-                <div className="delete-history-list">
-                  <div className="helper-text">
-                    Click one folder row to select it for subtree purge. Turning purge off will clear the selection.
-                  </div>
-                  {purgeFolderLabel ? <div className="delete-tag">{purgeFolderLabel}</div> : null}
-                </div>
-              </div>
-            ) : null}
-            {viewMode === 'files' && moveSelectionMode ? (
-              <div className="delete-history-box operation-box">
-                <div className="delete-history-title">Move selection</div>
-                <div className="delete-history-list">
-                  <div className="helper-text">
-                    Mark one file or folder as the source, then mark one folder or the current path as the destination.
-                  </div>
-                  {moveSourceLabel ? <div className="delete-tag">Source: {moveSourceLabel}</div> : null}
-                  {moveDestinationLabel ? <div className="delete-tag">Destination: {moveDestinationLabel}</div> : null}
-                </div>
-              </div>
-            ) : null}
-            {viewMode === 'trash' ? (
-              <div className="delete-history-box">
-                <div className="delete-history-title">Selection</div>
-                <div className="delete-history-list">
-                  <button className="secondary-button" onClick={toggleSelectAllTrash} disabled={visibleItems.length === 0 || !!trashAction} type="button">
-                    {selectedTrashCount === visibleItems.length && visibleItems.length > 0 ? 'Clear visible selection' : 'Select visible'}
-                  </button>
-                  <button className="secondary-button" onClick={handleRestoreTrash} disabled={selectedTrashCount === 0 || !!trashAction} type="button">
-                    {trashAction === 'restore' ? 'Restoring...' : `Restore selected (${selectedTrashCount})`}
-                  </button>
-                  <button className="danger-button" onClick={handleDeleteTrash} disabled={selectedTrashCount === 0 || !!trashAction} type="button">
-                    {trashAction === 'delete' ? 'Deleting...' : `Delete selected (${selectedTrashCount})`}
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {loading ? (
-              <div className="empty-state">{viewMode === 'trash' ? 'Loading trash...' : 'Loading files...'}</div>
-            ) : totalItemCount === 0 ? (
-              <div className="empty-state">{viewMode === 'trash' ? 'Trash is empty.' : 'No files found in this folder.'}</div>
-            ) : visibleItems.length === 0 ? (
-              <div className="empty-state">{viewMode === 'trash' ? 'No matching files in trash.' : 'No matching items in this folder.'}</div>
-            ) : (
-              <ul className="file-list">
-                {viewMode === 'files' && currentFolderId ? (
-                  <li className="file-row folder-row folder-up-row">
-                    <button className="folder-open-button" onClick={handleOpenParent} type="button">
-                      <span className="folder-icon" aria-hidden="true">DIR</span>
-                      <span className="folder-label">..</span>
-                    </button>
-                  </li>
-                ) : null}
-
-                {visibleItems.map((item) => {
-                  if (viewMode === 'trash') {
-                    const isSelected = !!selectedTrashIds[item.file_id];
-                    return (
-                      <li className="file-row" key={item.file_id}>
-                        <div className="file-meta">
-                          <div className="file-name-row">
-                            <label className="folder-open-button">
-                              <input
-                                type="checkbox"
-                                checked={isSelected}
-                                onChange={() => toggleTrashSelection(item.file_id)}
-                              />
-                              <span className="file-name">{item.name || 'Unnamed file'}</span>
-                            </label>
-                          </div>
-                          <div className="file-path">Restore to: {displayPath(item.parent_path || '/')}</div>
-                          <dl className="file-details">
-                            <div className="file-detail">
-                              <dt>Deleted</dt>
-                              <dd>{formatDateTime(item.deleted_at)}</dd>
-                            </div>
-                            <div className="file-detail">
-                              <dt>Uploaded</dt>
-                              <dd>{formatDateTime(item.upload_date)}</dd>
-                            </div>
-                          </dl>
-                        </div>
-                        <div className="row-actions">
-                          <button className="secondary-button" onClick={() => {
-                            setSelectedTrashIds({ [item.file_id]: true });
-                            setDeleteConfirmKey('');
-                          }} type="button">
-                            Select
-                          </button>
-                        </div>
-                      </li>
-                    );
-                  }
-
-                  if (item.kind === 'folder') {
-                    const isMoveSource = moveSelectionMode && normalizeId(moveSourceId) === normalizeId(item.file_id);
-                    const isMoveDestination = moveSelectionMode && normalizeId(moveDestinationId) === normalizeId(item.file_id);
-                    const moveDestinationBlockReason = getMoveDestinationBlockReason(item);
-                    return (
-                      <li className={`file-row folder-row${isMoveSource ? ' move-source-row' : ''}${isMoveDestination ? ' move-destination-row' : ''}`} key={item.file_id}>
-                        <div className="folder-row-shell">
-                          <button className="folder-open-button" onClick={() => handleOpenFolder(item.file_id)} type="button">
-                            <span className="folder-icon" aria-hidden="true">DIR</span>
-                            <span className="folder-label">{item.name}</span>
-                            <span className="folder-path">{item.path}</span>
-                          </button>
-                          {deleteMode ? (
-                            <div className="row-actions">
-                              {deleteConfirmKey === item.file_id ? (
-                                <>
-                                  <button className="danger-button" onClick={() => handleDelete(item.file_id)} disabled={deleting === item.file_id} type="button">
-                                    {deleting === item.file_id ? 'Deleting...' : 'Confirm'}
-                                  </button>
-                                  <button className="ghost-button" onClick={() => setDeleteConfirmKey('')} type="button">Cancel</button>
-                                </>
-                              ) : (
-                                <button className="danger-button" onClick={() => setDeleteConfirmKey(item.file_id)} type="button">Delete</button>
-                              )}
-                            </div>
-                          ) : purgeMode ? (
-                            <div className="row-actions">
-                              <button
-                                className={normalizeId(purgeFolderId) === normalizeId(item.file_id) ? 'accent-danger-button' : 'secondary-button'}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  if (normalizeId(purgeFolderId) === normalizeId(item.file_id)) {
-                                    setPurgeFolderId('');
-                                    setPurgeFolderLabel('');
-                                    setSuccess(`Cleared purge selection for ${item.path || item.name || item.file_id}.`);
-                                    setError('');
-                                  } else {
-                                    selectFolderForPurge(item);
-                                  }
-                                }}
-                                type="button"
-                              >
-                                {normalizeId(purgeFolderId) === normalizeId(item.file_id) ? 'Selected' : 'Select'}
-                              </button>
-                            </div>
-                          ) : moveSelectionMode ? (
-                            <div className="row-actions">
-                              <button
-                                className={isMoveSource ? 'accent-danger-button' : 'secondary-button'}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  if (isMoveSource) {
-                                    setMoveSourceId('');
-                                    setMoveSourceLabel('');
-                                    setMoveSourceKind('');
-                                    setSuccess(`Cleared move source for ${item.path || item.name || item.file_id}.`);
-                                    setError('');
-                                  } else {
-                                    selectItemForMoveSource(item);
-                                  }
-                                }}
-                                type="button"
-                              >
-                                {isMoveSource ? 'Source' : 'Mark source'}
-                              </button>
-                              <button
-                                className={isMoveDestination ? 'accent-danger-button' : 'secondary-button'}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  if (isMoveDestination) {
-                                    setMoveDestinationId('');
-                                    setMoveDestinationLabel('');
-                                    setSuccess(`Cleared move destination for ${item.path || item.name || item.file_id}.`);
-                                    setError('');
-                                  } else {
-                                    selectFolderForMoveDestination(item);
-                                  }
-                                }}
-                                disabled={!isMoveDestination && !!moveDestinationBlockReason}
-                                type="button"
-                              >
-                                {isMoveDestination ? 'Destination' : moveDestinationBlockReason || 'Mark destination'}
-                              </button>
-                            </div>
-                          ) : (
-                            null
-                          )}
-                        </div>
-                      </li>
-                    );
-                  }
-
-                  const renamePreview = buildRenamedObjectName(renameDrafts[item.file_id] || '', item.file_extension || '');
-                  const isMoveSource = moveSelectionMode && normalizeId(moveSourceId) === normalizeId(item.file_id);
-                  return (
-                    <li
-                      className={`file-row${isMoveSource ? ' move-source-row' : ''}`}
-                      key={item.file_id}
-                      data-file-key={item.file_id}
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        setActionMenuKey((current) => (current === item.file_id ? '' : item.file_id));
-                      }}
-                    >
-                      <div className="file-meta">
-                        <div className="file-name-row">
-                          {deleteMode ? (
-                            <label className="folder-open-button">
-                              <input
-                                type="checkbox"
-                                checked={!!selectedDeleteIds[item.file_id]}
-                                onChange={() => toggleDeleteSelection(item.file_id)}
-                              />
-                            </label>
-                          ) : null}
-                          <div className="file-name">{item.name || 'Unnamed file'}</div>
-                          {recentRenames[item.file_id] ? (
-                            <div className="rename-tag">
-                              {recentRenames[item.file_id].oldName} {'>>'} {recentRenames[item.file_id].newName}
-                            </div>
-                          ) : null}
-                        </div>
-                        <div className="file-path">{item.path}</div>
-                        <dl className="file-details">
-                          <div className="file-detail">
-                            <dt>Size</dt>
-                            <dd>{formatBytes(item.size)}</dd>
-                          </div>
-                          <div className="file-detail">
-                            <dt>Upload date</dt>
-                            <dd>{formatDateTime(item.upload_date)}</dd>
-                          </div>
-                        </dl>
-                        {actionMenuKey === item.file_id ? (
-                          <div className="action-menu">
-                            <button
-                              className="secondary-button"
-                              onClick={() => {
-                                setEditingKey(item.file_id);
-                                setActionMenuKey('');
-                              }}
-                              type="button"
-                            >
-                              Rename
-                            </button>
-                          </div>
-                        ) : null}
-                        {editingKey === item.file_id ? (
-                          <div className="rename-box">
-                            <label className="field grow">
-                              <span>Rename file</span>
-                              <input
-                                type="text"
-                                value={renameDrafts[item.file_id] || ''}
-                                onChange={(event) => setRenameDrafts((current) => ({ ...current, [item.file_id]: event.target.value }))}
-                                placeholder="new-file-name"
-                              />
-                            </label>
-                            <div className="rename-preview">
-                              Final name: {renamePreview || 'Enter a new name'}
-                            </div>
-                            {renameNotices[item.file_id] ? (
-                              <div className={renameNotices[item.file_id].type === 'success' ? 'inline-success-box' : 'inline-error-box'}>
-                                {renameNotices[item.file_id].message}
-                              </div>
-                            ) : null}
-                            <div className="rename-actions">
-                              <button className="secondary-button" onClick={() => handleRename(item)} disabled={!renamePreview || renaming === item.file_id} type="button">
-                                {renaming === item.file_id ? 'Renaming...' : 'Rename'}
-                              </button>
-                              <button
-                                className="ghost-button"
-                                onClick={() => {
-                                  setEditingKey('');
-                                  setRenameNotices((current) => ({ ...current, [item.file_id]: null }));
-                                }}
-                                type="button"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="row-actions">
-                        {deleteMode ? (
-                          deleteConfirmKey === item.file_id ? (
-                            <>
-                              <button className="danger-button" onClick={() => handleDelete(item.file_id)} disabled={deleting === item.file_id} type="button">
-                                {deleting === item.file_id ? 'Deleting...' : 'Confirm'}
-                              </button>
-                              <button className="ghost-button" onClick={() => setDeleteConfirmKey('')} type="button">Cancel</button>
-                            </>
-                          ) : (
-                            <button className="danger-button" onClick={() => setDeleteConfirmKey(item.file_id)} type="button">Delete</button>
-                          )
-                        ) : null}
-                        {moveSelectionMode ? (
-                          <button
-                            className={isMoveSource ? 'accent-danger-button' : 'secondary-button'}
-                            onClick={() => {
-                              if (isMoveSource) {
-                                setMoveSourceId('');
-                                setMoveSourceLabel('');
-                                setMoveSourceKind('');
-                                setSuccess(`Cleared move source for ${item.path || item.name || item.file_id}.`);
-                                setError('');
-                              } else {
-                                selectItemForMoveSource(item);
-                              }
-                            }}
-                            type="button"
-                          >
-                            {isMoveSource ? 'Source' : 'Mark source'}
-                          </button>
-                        ) : null}
-                        <button className="ghost-button" onClick={() => setActionMenuKey((current) => (current === item.file_id ? '' : item.file_id))} type="button">
-                          Actions
-                        </button>
-                        <button className="secondary-button" onClick={() => handleDownload(item.file_id)} disabled={downloading === item.file_id} type="button">
-                          {downloading === item.file_id ? 'Preparing...' : 'Download'}
-                        </button>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </section>
+          <ObjectBrowserPanel
+            viewMode={viewMode}
+            visibleItems={visibleItems}
+            totalItemCount={totalItemCount}
+            breadcrumbItems={breadcrumbItems}
+            currentFolderId={currentFolderId}
+            searchQuery={searchQuery}
+            sortMode={sortMode}
+            groupMode={groupMode}
+            loading={loading}
+            error={error}
+            success={success}
+            recentDeletes={recentDeletes}
+            deleteMode={deleteMode}
+            visibleFileItems={visibleFileItems}
+            selectedDeleteCount={selectedDeleteCount}
+            trashAction={trashAction}
+            purgeMode={purgeMode}
+            purgeFolderLabel={purgeFolderLabel}
+            moveSelectionMode={moveSelectionMode}
+            moveSourceLabel={moveSourceLabel}
+            moveDestinationLabel={moveDestinationLabel}
+            selectedTrashCount={selectedTrashCount}
+            selectedTrashIds={selectedTrashIds}
+            selectedDeleteIds={selectedDeleteIds}
+            deleteConfirmKey={deleteConfirmKey}
+            deleting={deleting}
+            purgeFolderId={normalizeId(purgeFolderId)}
+            moveSourceId={normalizeId(moveSourceId)}
+            moveDestinationId={normalizeId(moveDestinationId)}
+            recentRenames={recentRenames}
+            renameDrafts={renameDrafts}
+            actionMenuKey={actionMenuKey}
+            editingKey={editingKey}
+            renameNotices={renameNotices}
+            renaming={renaming}
+            downloading={downloading}
+            displayPath={displayPath}
+            formatDateTime={formatDateTime}
+            formatBytes={formatBytes}
+            buildRenamedObjectName={buildRenamedObjectName}
+            getMoveDestinationBlockReason={getMoveDestinationBlockReason}
+            onOpenFolder={handleOpenFolder}
+            onOpenParent={handleOpenParent}
+            onSearchChange={(event) => setSearchQuery(event.target.value)}
+            onSortChange={(event) => setSortMode(event.target.value)}
+            onGroupChange={(event) => setGroupMode(event.target.value)}
+            onToggleSelectAllFilesForDelete={toggleSelectAllFilesForDelete}
+            onSoftDeleteSelected={handleSoftDeleteSelected}
+            onToggleSelectAllTrash={toggleSelectAllTrash}
+            onRestoreTrash={handleRestoreTrash}
+            onDeleteTrash={handleDeleteTrash}
+            onToggleTrashSelection={toggleTrashSelection}
+            onSelectOnlyTrash={selectOnlyTrashItem}
+            onToggleDeleteSelection={toggleDeleteSelection}
+            onDelete={handleDelete}
+            onAskDelete={setDeleteConfirmKey}
+            onCancelDelete={() => setDeleteConfirmKey('')}
+            onTogglePurgeFolder={togglePurgeFolderSelection}
+            onToggleMoveSource={toggleMoveSourceSelection}
+            onToggleMoveDestination={toggleMoveDestinationSelection}
+            onToggleActionMenu={toggleActionMenu}
+            onStartRename={startRename}
+            onRenameDraftChange={updateRenameDraft}
+            onRename={handleRename}
+            onCancelRename={cancelRename}
+            onDownload={handleDownload}
+          />
         </div>
 
-        <aside className="side-column">
-          {viewMode === 'files' ? (
-            <>
-              <section className="panel side-panel">
-                <div className="section-head">
-                  <h2>Create folder</h2>
-                </div>
-                <form className="stack-form" onSubmit={handleCreateFolder}>
-                  <label className="field">
-                    <span>Folder name</span>
-                    <input type="text" value={folderName} onChange={(event) => setFolderName(event.target.value)} placeholder="new-folder" />
-                  </label>
-                  <div className="helper-text">Final folder: {buildFolderPreview(currentPath, folderName) || '/'}</div>
-                  <button className="primary-button" type="submit" disabled={!normalizeKey(folderName) || creatingFolder}>
-                    {creatingFolder ? 'Creating...' : 'Create folder'}
-                  </button>
-                </form>
-              </section>
-
-              <section className="panel side-panel">
-                <div className="section-head">
-                  <h2>Upload</h2>
-                </div>
-                <form className="stack-form" onSubmit={handleUpload}>
-                  <label className="field">
-                    <span>Select file</span>
-                    <input type="file" onChange={handleSelectedFileChange} />
-                  </label>
-                  <div className="helper-text">Current folder: {currentPath || '/'}</div>
-                  <div className="helper-text">Maximum file size: 1GB</div>
-                  <button className="primary-button" type="submit" disabled={!selectedFile || uploading}>
-                    {uploading ? 'Uploading...' : 'Upload'}
-                  </button>
-                </form>
-              </section>
-
-              <section className="panel side-panel">
-                <div className="section-head">
-                  <h2>Delete by id</h2>
-                </div>
-                <div className="stack-form">
-                  <label className="field">
-                    <span>File id</span>
-                    <input type="text" value={deleteObjectId} onChange={(event) => setDeleteObjectId(event.target.value)} placeholder="uuid" />
-                  </label>
-                  <button className="danger-button" onClick={() => handleDelete(deleteObjectId)} disabled={!normalizeId(deleteObjectId) || deleting} type="button">
-                    {deleting && normalizeId(deleteObjectId) === deleting ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
-              </section>
-
-              <section className="panel side-panel operation-tool-panel">
-                <div className="section-head">
-                  <h2>Subtree purge</h2>
-                </div>
-                <div className="stack-form">
-                  <div className="operation-chip-row">
-                    <span className="operation-chip operation-chip-blue">DFS</span>
-                    <span className="operation-chip operation-chip-red">DB + S3 purge</span>
-                  </div>
-                  <label className="field">
-                    <span>Folder id</span>
-                    <input
-                      type="text"
-                      value={purgeFolderId}
-                      onChange={(event) => setPurgeFolderId(event.target.value)}
-                      placeholder="folder id"
-                    />
-                  </label>
-                  <div className="helper-text">
-                    Deletes the selected folder subtree permanently from DynamoDB and S3. Files and empty folders are marked
-                    `deletion_pending` before removal.
-                  </div>
-                  {purgeFolderLabel ? (
-                    <div className="operation-status">
-                      <div>Selected folder: {purgeFolderLabel}</div>
-                      <div>Selected id: {purgeFolderId}</div>
-                    </div>
-                  ) : null}
-                  {purgeState.purge_active ? (
-                    <div className="operation-status">
-                      <div>In progress: {purgeState.root_id || 'unknown root'}</div>
-                      <div>Phase: {purgeState.phase || 'deleting'}</div>
-                    </div>
-                  ) : (
-                    <div className="operation-status operation-status-idle">No purge is active.</div>
-                  )}
-                  <button
-                    className="accent-danger-button"
-                    onClick={() => handlePurge()}
-                    disabled={!normalizeId(purgeFolderId) || purging}
-                    type="button"
-                  >
-                    {purging ? 'Deleting subtree...' : 'Start subtree purge'}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    onClick={() => handlePurge({ resume: true })}
-                    disabled={!purgeState.purge_active || purging}
-                    type="button"
-                  >
-                    {purging ? 'Resuming...' : 'Resume pending purge'}
-                  </button>
-                </div>
-              </section>
-
-              <section className="panel side-panel operation-tool-panel">
-                <div className="section-head">
-                  <h2>Move</h2>
-                </div>
-                <div className="stack-form">
-                  <div className="operation-chip-row">
-                    <span className="operation-chip operation-chip-blue">DFS copy</span>
-                    <span className="operation-chip operation-chip-red">Move + purge</span>
-                  </div>
-                  <label className="field">
-                    <span>Source id</span>
-                    <input
-                      type="text"
-                      value={moveSourceId}
-                      onChange={(event) => setMoveSourceId(event.target.value)}
-                      placeholder="file or folder id"
-                    />
-                  </label>
-                  <label className="field">
-                    <span>Destination folder id</span>
-                    <input
-                      type="text"
-                      value={moveDestinationId}
-                      onChange={(event) => setMoveDestinationId(event.target.value)}
-                      placeholder="folder id or empty for root"
-                    />
-                  </label>
-                  <div className="helper-text">
-                    Mark source and destination from the list, or type the ids directly. Source can be a file or folder.
-                  </div>
-                  <button
-                    className="secondary-button"
-                    onClick={useCurrentFolderAsMoveDestination}
-                    disabled={!!getCurrentFolderMoveBlockReason()}
-                    type="button"
-                  >
-                    {getCurrentFolderMoveBlockReason() ? `${getCurrentFolderMoveBlockReason()} destination` : 'Use current folder as destination'}
-                  </button>
-                  {moveSourceLabel ? (
-                    <div className="operation-status">
-                      <div>Source: {moveSourceLabel}</div>
-                      <div>Kind: {moveSourceKind || 'unknown'}</div>
-                      <div>Id: {moveSourceId}</div>
-                    </div>
-                  ) : null}
-                  {moveDestinationLabel ? (
-                    <div className="operation-status">
-                      <div>Destination: {moveDestinationLabel}</div>
-                      <div>Id: {moveDestinationId || '__root__'}</div>
-                    </div>
-                  ) : null}
-                  {moveState.move_active ? (
-                    <div className="operation-status">
-                      <div>In progress: {moveState.source_id || 'unknown source'}</div>
-                      <div>Kind: {moveState.source_kind || 'unknown'}</div>
-                      <div>Mode: {moveState.mode || 'merge'}</div>
-                      <div>Phase: {moveState.phase || 'copying'}</div>
-                    </div>
-                  ) : (
-                    <div className="operation-status operation-status-idle">No move is active.</div>
-                  )}
-                  <button
-                    className="accent-danger-button"
-                    onClick={() => handleMoveOperation('merge')}
-                    disabled={!normalizeId(moveSourceId) || moveRunning}
-                    type="button"
-                  >
-                    {moveRunning ? 'Moving...' : 'Start merge move'}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    onClick={() => handleMoveOperation('avoid_conflict')}
-                    disabled={!normalizeId(moveSourceId) || moveRunning}
-                    type="button"
-                  >
-                    {moveRunning ? 'Preparing...' : 'Start avoid-conflict move'}
-                  </button>
-                  <button
-                    className="secondary-button"
-                    onClick={() => handleMoveOperation(moveState.mode || 'merge', { resume: true })}
-                    disabled={!moveState.move_active || moveRunning}
-                    type="button"
-                  >
-                    {moveRunning ? 'Resuming...' : 'Resume pending move'}
-                  </button>
-                </div>
-              </section>
-            </>
-          ) : (
-            <section className="panel side-panel">
-              <div className="section-head">
-                <h2>Trash actions</h2>
-              </div>
-              <div className="stack-form">
-                <div className="helper-text">Selected files restore to their old parent folder. If that folder no longer exists, they go into `/restored/`.</div>
-                <button className="secondary-button" onClick={handleRestoreTrash} disabled={selectedTrashCount === 0 || !!trashAction} type="button">
-                  {trashAction === 'restore' ? 'Restoring...' : `Restore selected (${selectedTrashCount})`}
-                </button>
-                <button className="danger-button" onClick={handleDeleteTrash} disabled={selectedTrashCount === 0 || !!trashAction} type="button">
-                  {trashAction === 'delete' ? 'Deleting...' : `Delete forever (${selectedTrashCount})`}
-                </button>
-              </div>
-            </section>
-          )}
-
-          <section className="panel side-panel panel-muted">
-            <div className="section-head">
-              <h2>Session</h2>
-            </div>
-            <p className="subtle panel-note">Your login stays active after reload until you log out or the token expires.</p>
-          </section>
-        </aside>
+        <WorkspaceSidebar
+          viewMode={viewMode}
+          currentPath={currentPath}
+          folderForm={{
+            value: folderName,
+            submitting: creatingFolder,
+            onChange: (event) => setFolderName(event.target.value),
+            onSubmit: handleCreateFolder,
+          }}
+          uploadForm={{
+            selectedFile,
+            submitting: uploading,
+            onFileChange: handleSelectedFileChange,
+            onSubmit: handleUpload,
+          }}
+          deleteById={{
+            value: deleteObjectId,
+            submitting: deleting,
+            onChange: (event) => setDeleteObjectId(event.target.value),
+            onSubmit: () => handleDelete(deleteObjectId),
+          }}
+          purgeControls={{
+            folderId: purgeFolderId,
+            folderLabel: purgeFolderLabel,
+            state: purgeState,
+            running: purging,
+            onFolderIdChange: (event) => setPurgeFolderId(event.target.value),
+            onStart: () => handlePurge(),
+            onResume: () => handlePurge({ resume: true }),
+          }}
+          moveControls={{
+            sourceId: moveSourceId,
+            sourceLabel: moveSourceLabel,
+            sourceKind: moveSourceKind,
+            destinationId: moveDestinationId,
+            destinationLabel: moveDestinationLabel,
+            state: moveState,
+            running: moveRunning,
+            onSourceIdChange: (event) => setMoveSourceId(event.target.value),
+            onDestinationIdChange: (event) => setMoveDestinationId(event.target.value),
+            onUseCurrentFolderAsDestination: useCurrentFolderAsMoveDestination,
+            onStartMerge: () => handleMoveOperation('merge'),
+            onStartAvoidConflict: () => handleMoveOperation('avoid_conflict'),
+            onResume: () => handleMoveOperation(moveState.mode || 'merge', { resume: true }),
+          }}
+          trashControls={{
+            selectedCount: selectedTrashCount,
+            action: trashAction,
+            onRestore: handleRestoreTrash,
+            onDelete: handleDeleteTrash,
+          }}
+          helpers={{
+            buildFolderPreview,
+            normalizeKey,
+            normalizeId,
+            getCurrentFolderMoveBlockReason,
+          }}
+        />
       </section>
     </main>
   );
