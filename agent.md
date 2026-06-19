@@ -3,42 +3,39 @@
 ## What This Project Is
 This repo contains:
 - a FastAPI backend that lists, uploads, and deletes files in one S3 bucket
-- a React frontend that calls that backend directly from the browser
+- a React frontend served by Nginx, with `/api/...` proxied to the backend container
 
-The frontend is run locally with Node/Vite. The backend is run with Docker.
+The app is run with Docker Compose.
 
 ## Current Structure
 - Backend app: `backend/app/storage_backend.py`
 - Backend config module: `backend/app/config.py`
 - Backend storage service: `backend/app/services/object_storage_service.py`
 - Backend production image: `backend/dockerfile`
-- Backend dev image: `backend/Dockerfile.dev`
 - Backend dependencies: `backend/requirements.txt`
 - Frontend app: `frontend/src/App.jsx`
+- Frontend image: `frontend/dockerfile`
+- Frontend Nginx config: `frontend/nginx/default.conf`
 - Frontend entry page: `frontend/index.html`
 - Frontend package config: `frontend/package.json`
-- Backend prod compose: `docker-compose.yml`
-- Backend dev compose: `docker-compose.dev.yml`
+- Docker Compose: `docker-compose.yml`
 
 ## Backend Summary
 - Framework: FastAPI
 - AWS SDK: `boto3`
 - Server: `uvicorn`
 - Port: `8000`
-- Required environment variable: `S3_BUCKET`
-- Optional environment variable: `CORS_ORIGINS`
-- Optional environment variable: `BACKEND_DOMAIN`
 
 The backend creates an S3 client with the normal AWS credential chain. In this repo, Docker mounts the local AWS credentials directory into the container read-only.
 The route file should stay focused on request models and API handlers, while shared S3 behavior lives in the service layer.
-The config module should load settings from the repo root `.env` file and expose them as Python settings values instead of direct `os.environ[...]` reads in route code.
+The config module should load settings from `backend/pcs_backend_production.env`, `backend/.env`, or `backend/template.env` and expose them as Python settings values instead of direct `os.environ[...]` reads in route code.
 
 ## Frontend Summary
 - Stack: React with Vite
-- Local dev port: `3000`
-- Default backend base URL: `http://localhost:8000/api`
+- Browser port: `3000`
+- API base URL: `/api`
 
-The frontend is not part of Docker. It talks to the backend directly over HTTP.
+The frontend is built into an Nginx image. The browser talks to Nginx, and Nginx proxies `/api/...` requests to the backend container over the Docker bridge network.
 
 ## API Surface
 - `GET /api/` returns `{"status":"ok"}`
@@ -59,20 +56,10 @@ The frontend is not part of Docker. It talks to the backend directly over HTTP.
 - `DELETE /api/delete?file_id=...` is an alias for delete by query string
 
 ## How To Run
-Frontend:
-1. Open `frontend/`
-2. Run `npm install`
-3. Run `npm run dev`
-4. Open `http://localhost:3000`
-
-Backend production-like Docker run:
+App run:
 1. From the repo root, run `docker compose up --build`
-2. Open `http://localhost:8000/docs` for Swagger
-
-Backend Docker dev run:
-1. From the repo root, run `docker compose -f docker-compose.dev.yml up --build`
-2. This runs `uvicorn` with `--reload`
-3. Open `http://localhost:8000/docs`
+2. Open `http://localhost:3000` for the app
+3. Open `http://localhost:8000/docs` for Swagger
 
 ## Git workflow & permission
 - Git CLI commands that change repository state require user permission.
@@ -81,7 +68,6 @@ Backend Docker dev run:
 - Use `git commit -m "Title" -m "Detailed description"` so commits include both a title and a description.
 - Before running `git push`, ask the user and list the exact CLI command.
 - Every time a branch is switched or created, state the current branch afterward.
-- Dev containers should rely on the bind mount from `docker-compose.dev.yml`.
 - Keep generated cache and log files out of git.
 
 ## S3 and API Permission
@@ -90,12 +76,9 @@ Backend Docker dev run:
 - Treat upload, delete, rename, download-link generation, and list checks against the real bucket as permission-gated actions
 
 ## Docker workflow & permission
-- Dev start: `docker compose -f docker-compose.dev.yml up`
-- Dev rebuild image: `docker compose -f docker-compose.dev.yml build`
-- Dev close/take down: `docker compose -f docker-compose.dev.yml down`
-- Prod start: `docker compose up`
-- Prod rebuild image: `docker compose build`
-- Prod close/take down: `docker compose down`
+- Start: `docker compose up`
+- Rebuild image: `docker compose build`
+- Close/take down: `docker compose down`
 - Inspect: `docker ps` # allowed without asking
 - Inspect all docker (stop/running): `docker ps -a` # allowed without asking
 
@@ -103,22 +86,17 @@ Backend Docker dev run:
 ## Docker Notes
 `docker-compose.yml`:
 - builds from `backend/dockerfile`
-- publishes `8000:8000`
-- loads backend settings from the repo root `.env`
+- builds the frontend from `frontend/dockerfile`
+- publishes `3000:80` for the frontend
+- backend stays on the internal Docker network
+- loads backend settings from `backend/pcs_backend_production.env`
 - mounts `${USERPROFILE}/.aws:/root/.aws:ro`
-
-`docker-compose.dev.yml`:
-- builds from `backend/Dockerfile.dev`
-- publishes `8000:8000`
-- loads backend settings from the repo root `.env`
-- mounts `${USERPROFILE}/.aws:/root/.aws:ro`
-- bind-mounts `./backend:/app` for live backend edits, including the `app/` source package used by `uvicorn --reload`
+- uses a bridge network so Nginx can proxy `/api/...` to `backend:8000`
 
 ## Runtime Notes
 - `python-multipart` is required for uploads
 - `bcrypt` and `PyJWT` support the temporary login flow
-- the frontend assumes the backend is reachable at `http://localhost:8000/api` unless `VITE_API_BASE` is set
-- CORS is enabled in the backend specifically for local frontend development
+- the frontend assumes the API is reachable at `/api`
 
 ## Notes For Future Work
 

@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 def find_env_path():
     current_file = Path(__file__).resolve()
     candidate_paths = [
-        current_file.parents[2] / ".env",
         current_file.parents[1] / ".env",
-        Path.cwd() / ".env",
+        current_file.parents[1] / "pcs_backend_production.env",
+        current_file.parents[1] / "template.env",
     ]
 
     for candidate in candidate_paths:
@@ -28,9 +28,7 @@ def load_settings_env():
 
 @dataclass(frozen=True)
 class Settings:
-    s3_bucket: str
-    cors_origins: list[str]
-    backend_domain: str
+    aws_region: str
     file_metadata_table: str
     folder_metadata_table: str
     move_log_table: str
@@ -41,14 +39,7 @@ class Settings:
 def build_settings():
     load_settings_env()
 
-    s3_bucket = os.getenv("S3_BUCKET", "").strip()
-    if not s3_bucket:
-        raise RuntimeError("S3_BUCKET is required")
-
-    raw_origins = os.getenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
-    cors_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
-
-    backend_domain = os.getenv("BACKEND_DOMAIN", "http://localhost:8000").strip() or "http://localhost:8000"
+    aws_region = os.getenv("AWS_REGION", "ap-southeast-1").strip() or "ap-southeast-1"
     file_metadata_table = os.getenv("FILE_METADATA_TABLE", "file-meta-data").strip() or "file-meta-data"
     folder_metadata_table = os.getenv("FOLDER_METADATA_TABLE", "folder-meta-data").strip() or "folder-meta-data"
     move_log_table = os.getenv("MOVE_LOG_TABLE", "move_log").strip() or "move_log"
@@ -62,9 +53,7 @@ def build_settings():
         operation_batch_limit = 100
 
     return Settings(
-        s3_bucket=s3_bucket,
-        cors_origins=cors_origins,
-        backend_domain=backend_domain,
+        aws_region=aws_region,
         file_metadata_table=file_metadata_table,
         folder_metadata_table=folder_metadata_table,
         move_log_table=move_log_table,

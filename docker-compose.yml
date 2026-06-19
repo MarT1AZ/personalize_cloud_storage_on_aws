@@ -4,8 +4,23 @@ services:
       context: .
       dockerfile: backend/dockerfile
     env_file:
-      - .env
+      - ./backend/pcs_backend_production.env
     volumes:
       - ${USERPROFILE}/.aws:/root/.aws:ro
+    networks:
+      - pcs_net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: dockerfile
+    depends_on:
+      - backend
     ports:
-      - "8000:8000"
+      - "3000:80"
+    networks:
+      - pcs_net
+
+networks:
+  pcs_net:
+    driver: bridge

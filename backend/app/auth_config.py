@@ -8,9 +8,9 @@ from dotenv import load_dotenv
 def find_env_path():
     current_file = Path(__file__).resolve()
     candidate_paths = [
-        current_file.parents[2] / ".env",
         current_file.parents[1] / ".env",
-        Path.cwd() / ".env",
+        current_file.parents[1] / "pcs_backend_production.env",
+        current_file.parents[1] / "template.env",
     ]
 
     for candidate in candidate_paths:

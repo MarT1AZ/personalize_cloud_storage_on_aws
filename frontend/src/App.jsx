@@ -5,7 +5,7 @@ import TreePanel from './components/TreePanel';
 import WorkspaceHeader from './components/WorkspaceHeader';
 import WorkspaceSidebar from './components/WorkspaceSidebar';
 
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000/api';
+const API_BASE = '/api';
 const AUTH_TOKEN_KEY = 'pcs_auth_token';
 const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 
