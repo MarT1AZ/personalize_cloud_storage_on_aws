@@ -10,6 +10,7 @@ from fastapi import HTTPException
 import jwt
 
 from app.auth_config import auth_settings
+from app.config import settings
 
 
 class ObjectStorageService:
@@ -45,8 +46,8 @@ class ObjectStorageService:
     ):
         self.bucket = bucket
         self.user_id = user_id
-        self.s3 = s3_client or boto3.client("s3")
-        self.dynamodb = dynamodb_resource or boto3.resource("dynamodb")
+        self.s3 = s3_client or boto3.client("s3", region_name=settings.aws_region)
+        self.dynamodb = dynamodb_resource or boto3.resource("dynamodb", region_name=settings.aws_region)
         self.file_table = self.dynamodb.Table(file_metadata_table)
         self.folder_table = self.dynamodb.Table(folder_metadata_table)
         self.move_log_table = self.dynamodb.Table(move_log_table)

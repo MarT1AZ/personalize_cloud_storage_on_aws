@@ -2,14 +2,17 @@ from fastapi import APIRouter, Depends
 
 from app.auth_dependencies import get_authenticated_user
 from app.auth_models import LoginRequest, LoginResponse, UserProfile
-from app.auth_service import auth_service
+from app.auth_service import AuthService, get_auth_service
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=LoginResponse)
-def login(request: LoginRequest):
+def login(
+    request: LoginRequest,
+    auth_service: AuthService = Depends(get_auth_service),
+):
     return auth_service.login(request.username, request.password)
 
 

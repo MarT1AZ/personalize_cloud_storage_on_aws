@@ -7,6 +7,7 @@ import jwt
 from fastapi import HTTPException, status
 
 from app.auth_config import auth_settings
+from app.config import settings
 from app.auth_models import BucketInfo, LoginResponse, UserProfile
 
 
@@ -14,7 +15,7 @@ class AuthService:
     USERNAME_INDEX = "username_index"
 
     def __init__(self, dynamodb_resource=None):
-        self.dynamodb = dynamodb_resource or boto3.resource("dynamodb")
+        self.dynamodb = dynamodb_resource or boto3.resource("dynamodb", region_name=settings.aws_region)
         self.user_table = self.dynamodb.Table(auth_settings.user_data_table)
 
     def get_user_item(self, username: str):
@@ -126,5 +127,5 @@ class AuthService:
             user=user_profile,
         )
 
-
-auth_service = AuthService()
+def get_auth_service() -> AuthService:
+    return AuthService()

@@ -15,10 +15,9 @@ frontend/node_modules/
 frontend/dist/
 
 # Local env files
-.env
-.env.local
-.env.development
-.env.production
+**/.env
+**/.env.*
+!**/.env.template
 
 # Local editor files
 .idea/
@@ -26,3 +25,4 @@ frontend/dist/
 
 # Sensitive/local project files
 backend/run.txt
+artifacts/

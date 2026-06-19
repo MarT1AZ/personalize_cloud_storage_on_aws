@@ -1,8 +1,19 @@
 from fastapi import FastAPI, Depends
-from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import boto3
+from botocore.exceptions import (
+    BotoCoreError,
+    ClientError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    NoCredentialsError,
+    NoRegionError,
+    ParamValidationError,
+    PartialCredentialsError,
+    ReadTimeoutError,
+)
 
+from app.aws_error_handling import aws_exception_handler
 from app.auth_dependencies import get_authenticated_user
 from app.auth_models import UserProfile
 from app.auth_router import router as auth_router
@@ -46,13 +57,15 @@ class UploadCompleteRequest(BaseModel):
     upload_token: str
 
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_exception_handler(ClientError, aws_exception_handler)
+app.add_exception_handler(BotoCoreError, aws_exception_handler)
+app.add_exception_handler(NoCredentialsError, aws_exception_handler)
+app.add_exception_handler(PartialCredentialsError, aws_exception_handler)
+app.add_exception_handler(NoRegionError, aws_exception_handler)
+app.add_exception_handler(ParamValidationError, aws_exception_handler)
+app.add_exception_handler(EndpointConnectionError, aws_exception_handler)
+app.add_exception_handler(ConnectTimeoutError, aws_exception_handler)
+app.add_exception_handler(ReadTimeoutError, aws_exception_handler)
 
 app.include_router(auth_router)
 
@@ -71,7 +84,7 @@ def get_storage_service(current_user: UserProfile = Depends(get_authenticated_us
 
 @app.get("/api/whoami")
 def whoami(current_user: UserProfile = Depends(get_authenticated_user)):
-    return boto3.client("sts").get_caller_identity()
+    return boto3.client("sts", region_name=settings.aws_region).get_caller_identity()
 
 
 @app.get("/api/")
