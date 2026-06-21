@@ -7,7 +7,5 @@ RUN pip install -r requirements.txt
 
 COPY backend/app /app/app
 COPY scripts /app/scripts
-COPY backend/pcs_backend_production.env /app/pcs_backend_production.env
-COPY backend/template.env /app/template.env
 
 CMD ["python", "--version"]
