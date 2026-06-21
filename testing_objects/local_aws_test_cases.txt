@@ -1,0 +1,199 @@
+Local + AWS Test Cases
+
+Goal
+- Run the same checks in local Docker and AWS deployment
+- Compare behavior, error messages, and final DB/S3 state
+
+How to use
+- Run every case once in local
+- Run every case again in AWS
+- Mark each case as: same / different / failed
+- If different, save screenshot and note exact error text
+
+Environment labels
+- Local = docker compose app on localhost
+- AWS = deployed cloud version
+
+1. Health and login
+- Open UI
+- Log in with valid user
+- Expect: login succeeds in both environments
+- Expect: file list loads after login
+
+2. Invalid login
+- Use wrong password
+- Expect: controlled auth error
+- Expect: no crash, no blank screen
+
+3. Refresh with saved session
+- Log in
+- Refresh browser
+- Expect: session persists in both environments
+
+4. Create root folder
+- Create folder `case_root`
+- Expect: folder appears immediately
+- Expect: same folder count and visible path in both environments
+
+5. Create nested folder
+- Inside `case_root`, create `case_child`
+- Expect: nested folder appears
+- Expect: breadcrumb and path are correct
+
+6. Duplicate active folder creation
+- Try creating `case_child` again in same parent
+- Expect: blocked in both environments
+- Expect: same or equivalent error message
+
+7. Upload small file
+- Upload one small file into `case_root`
+- Expect: upload succeeds
+- Expect: file appears without manual refresh issue
+- Expect: name, size, and date render
+
+8. Upload duplicate active file
+- Upload same file again into same folder
+- Expect: `_copy` naming rule
+- Example: `file.txt` -> `file_copy.txt`
+
+9. Upload duplicate chain
+- Upload same file third time
+- Expect: chained naming rule
+- Example: `file.txt` -> `file_copy_2.txt`
+
+10. Upload same base name, different extension
+- Upload `demo.py`
+- Upload `demo.txt`
+- Expect: both allowed
+
+11. Download file
+- Download one uploaded file
+- Expect: file downloads successfully in both environments
+
+12. Rename file
+- Rename a file without extension in the input
+- Expect: original extension is preserved
+
+13. Move one file to trash
+- Delete one active file from current folder view
+- Expect: file disappears from normal view
+- Expect: file appears in trash
+
+14. Multi-select trash
+- Select multiple active files
+- Move them to trash
+- Expect: selected files move to trash together
+
+15. Restore simple file
+- Restore one trashed file whose parent still exists
+- Expect: file returns to original parent
+
+16. Restore file with active name conflict
+- Trash `file.txt`
+- Recreate or upload active `file.txt`
+- Restore deleted one
+- Expect: restored file uses `_restored`
+
+17. Restore file with deleted parent folder
+- Create `case_root/case_deleted/file.txt`
+- Delete file
+- Delete folder chain as needed
+- Restore file
+- Expect: folder chain is reconstructed and file is restored
+
+18. Restore deleted parent with folder conflict
+- Delete folder `f1` containing deleted file
+- Create a new active `f1` in same parent
+- Restore deleted file
+- Expect: restored folder becomes `f1_restored` or chained variant
+
+19. Tree view active-only
+- Open tree view in active mode
+- Expect: only active items appear
+- Expect: deleted items stay hidden
+
+20. Tree view all-state
+- Open tree view in all-state mode
+- Expect: deleted folders/files are visible
+
+21. Tree navigation
+- Use tree view to jump into nested folder
+- Expect: folder opens correctly from one click
+
+22. Move active file to different folder
+- Move one active file from `case_root` to another folder
+- Expect: destination gets file
+- Expect: source entry is purged after move flow completes
+
+23. Move active file with active conflict
+- Destination already contains same active file name
+- Expect: moved file gets `_moved`
+
+24. Move active file with different extension
+- Destination has same base name, different extension
+- Expect: no conflict rename
+
+25. Move folder to another folder
+- Move folder with at least one child file
+- Expect: subtree recreated in destination
+- Expect: source subtree removed after purge
+
+26. Block move to same parent
+- Try moving file/folder to the same parent
+- Expect: blocked in both environments
+
+27. Block move folder into itself
+- Try moving folder into itself
+- Expect: blocked
+
+28. Block move folder into child
+- Try moving folder into its descendant
+- Expect: blocked
+
+29. Purge folder
+- Use purge on a test folder subtree
+- Expect: DB entries removed
+- Expect: S3 objects removed
+
+30. Root deleted folder with zero children
+- Delete folder until `children_count` reaches 0
+- Expect: actual hard delete happens
+- Expect: no leftover deleted root-level folder row
+
+31. Upload size guard
+- Try file larger than 1GB if practical, or validate known guard flow
+- Expect: blocked before or during upload in a controlled way
+- Expect: no silent success
+
+32. Presigned upload flow
+- Upload a normal file
+- Expect: UI -> backend init -> S3 upload -> backend complete flow works
+- Expect: resulting DB entry exists and download works
+
+33. Error handling when AWS resource is unavailable
+- If you have a safe way to simulate it, test one failing request
+- Expect: clean API/UI error instead of backend startup crash
+
+34. DB -> S3 validation script
+- Run consistency check with DB as source of truth
+- Expect: no file issues
+- Expect: no folder issues
+- Expect: no orphan files/folders
+
+35. S3 -> DB validation script
+- Run consistency check with S3 as source of truth
+- Expect: no missing DB entries for active test data
+- Expect: no stale S3 objects after cleanup
+
+Suggested compare notes
+- Login behavior
+- Upload behavior
+- Error wording
+- Rename/move/restore naming behavior
+- Tree rendering
+- Trash behavior
+- DB/S3 validation results
+
+Pass condition
+- Local and AWS should match on all intended behaviors
+- Any difference should be explainable by environment-only config, not app logic

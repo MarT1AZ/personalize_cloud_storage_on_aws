@@ -421,6 +421,11 @@ export default function App() {
       setBreadcrumbItems(Array.isArray(data?.breadcrumbs) && data.breadcrumbs.length > 0 ? data.breadcrumbs : [{ label: 'Root', folder_id: '' }]);
       setFolders(Array.isArray(data?.folders) ? data.folders : []);
       setFiles(Array.isArray(data?.files) ? data.files : []);
+      const partialErrors = data?.partial_errors && typeof data.partial_errors === 'object' ? data.partial_errors : {};
+      const partialMessages = Object.values(partialErrors).filter(Boolean);
+      if (partialMessages.length > 0) {
+        setError(partialMessages.join(' '));
+      }
       setTrashedFiles([]);
       setSelectedTrashIds({});
       setSelectedDeleteIds({});

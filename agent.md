@@ -12,6 +12,7 @@ The app is run with Docker Compose.
 - Backend config module: `backend/app/config.py`
 - Backend storage service: `backend/app/services/object_storage_service.py`
 - Backend production image: `backend/dockerfile`
+- Backend ops image: `scripts/dockerfile`
 - Backend dependencies: `backend/requirements.txt`
 - Frontend app: `frontend/src/App.jsx`
 - Frontend image: `frontend/dockerfile`
@@ -92,6 +93,17 @@ App run:
 - loads backend settings from `backend/pcs_backend_production.env`
 - mounts `${USERPROFILE}/.aws:/root/.aws:ro`
 - uses a bridge network so Nginx can proxy `/api/...` to `backend:8000`
+
+## Testing Scripts
+`scripts/dockerfile`:
+- includes `backend/app` and `scripts/`
+- is intended for maintenance commands such as storage validation scripts
+- keeps the main runtime image slim by leaving scripts out of `backend/dockerfile`
+- build command: `docker build -f scripts/dockerfile -t pcs_backend_ops .`
+- run DB -> S3 validation:
+  `docker run --rm --env-file backend/pcs_backend_production.env -v ${USERPROFILE}/.aws:/root/.aws:ro pcs_backend_ops python /app/scripts/check_storage_consistency.py --bucket <bucket-name>`
+- run S3 -> DB validation:
+  `docker run --rm --env-file backend/pcs_backend_production.env -v ${USERPROFILE}/.aws:/root/.aws:ro pcs_backend_ops python /app/scripts/check_s3_source_of_truth.py --bucket <bucket-name>`
 
 ## Runtime Notes
 - `python-multipart` is required for uploads

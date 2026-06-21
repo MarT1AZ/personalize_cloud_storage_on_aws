@@ -18,6 +18,7 @@ frontend/dist/
 **/.env
 **/.env.*
 !**/.env.template
+backend/pcs_backend_production.env
 
 # Local editor files
 .idea/

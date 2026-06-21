@@ -1,16 +1,21 @@
 from datetime import datetime, timezone
+import logging
 from pathlib import PurePosixPath
 import secrets
 
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
 from botocore.client import Config
-from botocore.exceptions import ClientError
+from botocore.exceptions import BotoCoreError, ClientError, ConnectTimeoutError, EndpointConnectionError, NoCredentialsError, NoRegionError, ParamValidationError, PartialCredentialsError, ReadTimeoutError
 from fastapi import HTTPException
 import jwt
 
+from app.aws_error_handling import build_error_result
 from app.auth_config import auth_settings
 from app.config import settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class ObjectStorageService:
@@ -29,6 +34,7 @@ class ObjectStorageService:
     STATUS_ACTIVE = "active"
     STATUS_DELETED = "deleted"
     STATUS_MOVED = "moved"
+    STATUS_PENDING = "pending"
     MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
     DIRECT_UPLOAD_EXPIRES_SECONDS = 900
 
@@ -38,6 +44,7 @@ class ObjectStorageService:
         user_id: str,
         file_metadata_table: str,
         folder_metadata_table: str,
+        deletion_log_table: str,
         move_log_table: str,
         purge_log_table: str,
         operation_batch_limit: int = 100,
@@ -50,6 +57,7 @@ class ObjectStorageService:
         self.dynamodb = dynamodb_resource or boto3.resource("dynamodb", region_name=settings.aws_region)
         self.file_table = self.dynamodb.Table(file_metadata_table)
         self.folder_table = self.dynamodb.Table(folder_metadata_table)
+        self.deletion_log_table = self.dynamodb.Table(deletion_log_table)
         self.move_log_table = self.dynamodb.Table(move_log_table)
         self.purge_log_table = self.dynamodb.Table(purge_log_table)
         self.operation_batch_limit = max(int(operation_batch_limit or 100), 1)
@@ -63,34 +71,68 @@ class ObjectStorageService:
         parent_filter = self.build_parent_folder_filter(folder_id or None)
 
         folders = []
-        for folder_metadata in self.scan_table(
-            self.folder_table,
-            Attr("user_id").eq(self.user_id)
-            & parent_filter
-            & Attr("status").eq(self.STATUS_ACTIVE),
-        ):
-            folders.append(self.serialize_folder(folder_metadata, base_display_path))
+        partial_errors = {}
+        try:
+            for folder_metadata in self.scan_table(
+                self.folder_table,
+                Attr("user_id").eq(self.user_id)
+                & parent_filter
+                & Attr("status").eq(self.STATUS_ACTIVE),
+            ):
+                folders.append(self.serialize_folder(folder_metadata, base_display_path))
+        except (
+            BotoCoreError,
+            ClientError,
+            ConnectTimeoutError,
+            EndpointConnectionError,
+            NoCredentialsError,
+            NoRegionError,
+            ParamValidationError,
+            PartialCredentialsError,
+            ReadTimeoutError,
+        ) as exc:
+            result = build_error_result(exc)
+            logger.error("Partial list_files error on folders for user [%s]: %s", self.user_id, result.log_detail)
+            partial_errors["folders"] = result.ui_detail
 
         files = []
-        for file_metadata in self.scan_table(
-            self.file_table,
-            Attr("user_id").eq(self.user_id)
-            & parent_filter
-            & Attr("status").eq(self.STATUS_ACTIVE),
-        ):
-            size = self.get_s3_object_size(file_metadata)
-            files.append(self.serialize_file(file_metadata, base_display_path, size=size))
+        try:
+            for file_metadata in self.scan_table(
+                self.file_table,
+                Attr("user_id").eq(self.user_id)
+                & parent_filter
+                & Attr("status").eq(self.STATUS_ACTIVE),
+            ):
+                size = self.get_s3_object_size(file_metadata)
+                files.append(self.serialize_file(file_metadata, base_display_path, size=size))
+        except (
+            BotoCoreError,
+            ClientError,
+            ConnectTimeoutError,
+            EndpointConnectionError,
+            NoCredentialsError,
+            NoRegionError,
+            ParamValidationError,
+            PartialCredentialsError,
+            ReadTimeoutError,
+        ) as exc:
+            result = build_error_result(exc)
+            logger.error("Partial list_files error on files for user [%s]: %s", self.user_id, result.log_detail)
+            partial_errors["files"] = result.ui_detail
 
         folders.sort(key=lambda item: (item.get("name") or "").lower())
         files.sort(key=lambda item: (item.get("name") or "").lower())
 
-        return {
+        response = {
             "current_folder_id": folder_id,
             "current_path": base_display_path,
             "breadcrumbs": breadcrumbs,
             "folders": folders,
             "files": files,
         }
+        if partial_errors:
+            response["partial_errors"] = partial_errors
+        return response
 
     def list_trashed_files(self):
         trashed_items = []
@@ -149,11 +191,16 @@ class ObjectStorageService:
             "parent_folder_id": self.to_storage_parent_folder_id(parent_folder_id),
             "file_name": final_file_name,
             "file_extension": self.get_file_extension(final_file_name),
-            "status": self.STATUS_ACTIVE,
+            "status": self.STATUS_PENDING,
             "created_at": self.iso_from_datetime(now),
             "deleted_at": None,
         }
         object_key = self.build_file_key(metadata)
+        self.file_table.put_item(
+            Item=metadata,
+            ConditionExpression="attribute_not_exists(file_id)",
+        )
+
         upload_token = self.encode_upload_token(
             file_id=file_id,
             parent_folder_id=parent_folder_id,
@@ -176,7 +223,11 @@ class ObjectStorageService:
                 "Content-Type": normalized_file_type,
             }
 
-        presigned_post = self.get_upload_signing_client().generate_presigned_post(**presigned_post_kwargs)
+        try:
+            presigned_post = self.get_upload_signing_client().generate_presigned_post(**presigned_post_kwargs)
+        except Exception:
+            self.delete_pending_file_row(file_id)
+            raise
 
         return {
             "file_id": file_id,
@@ -213,27 +264,31 @@ class ObjectStorageService:
         if content_length > self.MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=400, detail="Uploaded file exceeds the 1GB limit")
 
-        metadata = {
-            "file_id": file_id,
-            "user_id": self.user_id,
-            "parent_folder_id": self.to_storage_parent_folder_id(parent_folder_id),
-            "file_name": file_name,
-            "file_extension": file_extension or self.get_file_extension(file_name),
-            "status": self.STATUS_ACTIVE,
-            "created_at": self.now_iso(),
-            "deleted_at": None,
-        }
+        metadata = self.get_file(file_id, require_active=False)
+        if metadata.get("status") == self.STATUS_ACTIVE:
+            raise HTTPException(status_code=409, detail="Upload session has already been completed")
+        if metadata.get("status") != self.STATUS_PENDING:
+            raise HTTPException(status_code=400, detail="Upload session is not in a pending state")
 
         if content_type and head_response.get("ContentType") and head_response.get("ContentType") != content_type:
             raise HTTPException(status_code=400, detail="Uploaded file content type does not match the upload session")
 
         try:
-            self.file_table.put_item(
-                Item=metadata,
-                ConditionExpression="attribute_not_exists(file_id)",
+            self.file_table.update_item(
+                Key={"file_id": file_id},
+                UpdateExpression="SET file_name = :file_name, file_extension = :file_extension, #status = :status, deleted_at = :deleted_at",
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":file_name": file_name,
+                    ":file_extension": file_extension or self.get_file_extension(file_name),
+                    ":status": self.STATUS_ACTIVE,
+                    ":deleted_at": None,
+                    ":pending_status": self.STATUS_PENDING,
+                },
+                ConditionExpression="attribute_exists(file_id) AND #status = :pending_status",
             )
         except ClientError as exc:
-            raise HTTPException(status_code=409, detail="Upload session has already been completed") from exc
+            raise HTTPException(status_code=409, detail="Upload session could not be finalized") from exc
         self.increment_children_count(parent_folder_id)
 
         return {
@@ -256,24 +311,71 @@ class ObjectStorageService:
             "user_id": self.user_id,
             "parent_folder_id": self.to_storage_parent_folder_id(parent_folder["folder_id"] if parent_folder else None),
             "folder_name": normalized_name,
-            "status": self.STATUS_ACTIVE,
+            "status": self.STATUS_PENDING,
             "created_at": now,
             "deleted_at": None,
             "children_count": 0,
         }
 
-        self.s3.put_object(
-            Bucket=self.bucket,
-            Key=self.build_folder_key(metadata),
-            Body=b"",
+        self.folder_table.put_item(
+            Item=metadata,
+            ConditionExpression="attribute_not_exists(folder_id)",
         )
-        self.folder_table.put_item(Item=metadata)
-        self.increment_children_count(parent_folder["folder_id"] if parent_folder else None)
+        try:
+            self.s3.put_object(
+                Bucket=self.bucket,
+                Key=self.build_folder_key(metadata),
+                Body=b"",
+            )
+            self.folder_table.update_item(
+                Key={"folder_id": folder_id},
+                UpdateExpression="SET #status = :status",
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":status": self.STATUS_ACTIVE,
+                    ":pending_status": self.STATUS_PENDING,
+                },
+                ConditionExpression="attribute_exists(folder_id) AND #status = :pending_status",
+            )
+            self.increment_children_count(parent_folder["folder_id"] if parent_folder else None)
+        except Exception:
+            self.rollback_pending_folder_row(metadata)
+            raise
 
         return {
             "created_folder_id": folder_id,
             "created_folder_name": normalized_name,
         }
+
+    def delete_pending_file_row(self, file_id: str):
+        try:
+            self.file_table.delete_item(
+                Key={"file_id": file_id},
+                ConditionExpression="attribute_exists(file_id)",
+            )
+        except Exception as exc:
+            logger.error("Failed to delete pending file row [%s]: %s", file_id, exc)
+
+    def rollback_pending_folder_row(self, metadata):
+        folder_id = str(metadata.get("folder_id") or "").strip()
+        if not folder_id:
+            return
+
+        try:
+            self.s3.delete_object(
+                Bucket=self.bucket,
+                Key=self.build_folder_key(metadata),
+            )
+        except Exception as exc:
+            logger.error("Failed to roll back S3 folder object for pending folder [%s]: %s", folder_id, exc)
+
+        try:
+            self.folder_table.delete_item(
+                Key={"folder_id": folder_id},
+                ConditionExpression="attribute_exists(folder_id)",
+            )
+        except Exception as exc:
+            logger.error("Failed to delete pending folder row [%s]: %s", folder_id, exc)
 
     def get_download_url(self, file_id: str):
         metadata = self.get_file(file_id, require_active=True)

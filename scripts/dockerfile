@@ -1,0 +1,13 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+COPY backend/requirements.txt /app/requirements.txt
+RUN pip install -r requirements.txt
+
+COPY backend/app /app/app
+COPY scripts /app/scripts
+COPY backend/pcs_backend_production.env /app/pcs_backend_production.env
+COPY backend/template.env /app/template.env
+
+CMD ["python", "--version"]
