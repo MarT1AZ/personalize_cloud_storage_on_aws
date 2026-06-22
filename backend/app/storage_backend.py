@@ -13,7 +13,7 @@ from botocore.exceptions import (
     ReadTimeoutError,
 )
 
-from app.aws_error_handling import aws_exception_handler
+from app.aws_error_handling import aws_exception_handler, ResourceUnavailableError, resource_unavailable_exception_handler
 from app.auth_dependencies import get_authenticated_user
 from app.auth_models import UserProfile
 from app.auth_router import router as auth_router
@@ -66,6 +66,7 @@ app.add_exception_handler(ParamValidationError, aws_exception_handler)
 app.add_exception_handler(EndpointConnectionError, aws_exception_handler)
 app.add_exception_handler(ConnectTimeoutError, aws_exception_handler)
 app.add_exception_handler(ReadTimeoutError, aws_exception_handler)
+app.add_exception_handler(ResourceUnavailableError, resource_unavailable_exception_handler)
 
 app.include_router(auth_router)
 

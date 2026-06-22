@@ -26,7 +26,24 @@ class AwsErrorResult:
     log_detail: str
 
 
+@dataclass(frozen=True)
+class ResourceUnavailableError(Exception):
+    status_code: int
+    ui_detail: str
+    log_detail: str
+
+    def __str__(self) -> str:
+        return self.log_detail
+
+
 def build_error_result(exc: Exception) -> AwsErrorResult:
+    if isinstance(exc, ResourceUnavailableError):
+        return AwsErrorResult(
+            status_code=exc.status_code,
+            ui_detail=exc.ui_detail,
+            log_detail=exc.log_detail,
+        )
+
     if isinstance(exc, NoCredentialsError):
         return AwsErrorResult(
             status_code=503,
@@ -141,6 +158,15 @@ def map_aws_exception_to_http(exc: Exception) -> HTTPException:
 async def aws_exception_handler(request: Request, exc: Exception):
     result = build_error_result(exc)
     logger.error("AWS error on %s %s: %s", request.method, request.url.path, result.log_detail)
+    return JSONResponse(
+        status_code=result.status_code,
+        content={"detail": result.ui_detail},
+    )
+
+
+async def resource_unavailable_exception_handler(request: Request, exc: ResourceUnavailableError):
+    result = build_error_result(exc)
+    logger.error("Resource check failed on %s %s: %s", request.method, request.url.path, result.log_detail)
     return JSONResponse(
         status_code=result.status_code,
         content={"detail": result.ui_detail},

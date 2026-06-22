@@ -1263,6 +1263,27 @@ class ObjectStorageService:
             ConditionExpression="attribute_exists(file_id)",
         )
 
+    def restore_file_from_deletion_pending(self, metadata):
+        try:
+            self.file_table.update_item(
+                Key={"file_id": metadata["file_id"]},
+                UpdateExpression="SET deletion_pending = :pending, deletion_root_id = :root_id, #status = :status, deleted_at = :deleted_at",
+                ExpressionAttributeNames={"#status": "status"},
+                ExpressionAttributeValues={
+                    ":pending": False,
+                    ":root_id": "",
+                    ":status": self.STATUS_DELETED,
+                    ":deleted_at": metadata.get("deleted_at"),
+                },
+                ConditionExpression="attribute_exists(file_id)",
+            )
+        except Exception as restore_exc:
+            logger.error(
+                "Failed to restore file [%s] from deletion_pending state: %s",
+                metadata.get("file_id"),
+                restore_exc,
+            )
+
     def mark_folder_deletion_pending(self, folder_id: str, root_id: str):
         self.folder_table.update_item(
             Key={"folder_id": folder_id},
@@ -1346,15 +1367,35 @@ class ObjectStorageService:
             ),
         )
 
-    def create_deletion_log(self, root_id: str, root_parent_id: str | None):
-        return self.create_purge_log(
-            operation_id=self.generate_short_id(),
-            root_id=root_id,
-            root_kind="folder",
-            root_parent_id=root_parent_id,
-            preceding_log_id="",
-            trigger_operation="manual_purge",
-        )
+    def create_deletion_log(
+        self,
+        *,
+        root_id: str,
+        root_kind: str,
+        root_parent_id: str | None,
+        trigger_operation: str,
+    ):
+        now = self.now_iso()
+        metadata = {
+            "log_id": self.generate_short_id(),
+            "operation_id": self.generate_short_id(),
+            "user_id": self.user_id,
+            "operation_type": self.LOG_OPERATION_DELETE,
+            "root_entry_id": root_id,
+            "root_entry_kind": root_kind,
+            "root_parent_folder_id": root_parent_id or "",
+            "trigger_operation": trigger_operation,
+            "status": self.LOG_STATUS_RUNNING,
+            "phase": "marking_pending",
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": "",
+            "last_error": "",
+            "deleted_files_count": 0,
+            "deleted_folders_count": 0,
+        }
+        self.deletion_log_table.put_item(Item=metadata)
+        return metadata
 
     def create_purge_log(
         self,
@@ -1507,15 +1548,42 @@ class ObjectStorageService:
         deleted_folders_count: int | None = None,
         completed_at: str | None = None,
     ):
-        return self.update_purge_log(
-            log_id,
-            status=status,
-            phase=phase,
-            last_error=last_error,
-            deleted_files_count=deleted_files_count,
-            deleted_folders_count=deleted_folders_count,
-            completed_at=completed_at,
-        )
+        update_parts = ["updated_at = :updated_at"]
+        expression_attribute_names = {}
+        expression_attribute_values = {
+            ":updated_at": self.now_iso(),
+        }
+
+        if status is not None:
+            update_parts.append("#status = :status")
+            expression_attribute_names["#status"] = "status"
+            expression_attribute_values[":status"] = status
+        if phase is not None:
+            update_parts.append("phase = :phase")
+            expression_attribute_values[":phase"] = phase
+        if last_error is not None:
+            update_parts.append("last_error = :last_error")
+            expression_attribute_values[":last_error"] = last_error
+        if deleted_files_count is not None:
+            update_parts.append("deleted_files_count = :deleted_files_count")
+            expression_attribute_values[":deleted_files_count"] = int(deleted_files_count)
+        if deleted_folders_count is not None:
+            update_parts.append("deleted_folders_count = :deleted_folders_count")
+            expression_attribute_values[":deleted_folders_count"] = int(deleted_folders_count)
+        if completed_at is not None:
+            update_parts.append("completed_at = :completed_at")
+            expression_attribute_values[":completed_at"] = completed_at
+
+        update_kwargs = {
+            "Key": {"log_id": log_id},
+            "UpdateExpression": "SET " + ", ".join(update_parts),
+            "ExpressionAttributeValues": expression_attribute_values,
+            "ConditionExpression": "attribute_exists(log_id)",
+        }
+        if expression_attribute_names:
+            update_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+        self.deletion_log_table.update_item(**update_kwargs)
 
     def update_purge_log(
         self,
@@ -1836,7 +1904,7 @@ class ObjectStorageService:
         }
 
     def permanently_delete_objects(self, file_ids: list[str]):
-        self.resource_guard.tables(self.file_table, self.folder_table)
+        self.resource_guard.tables(self.file_table, self.folder_table, self.deletion_log_table)
         self.resource_guard.s3_bucket(self.bucket)
         normalized_ids = self.normalize_file_ids(file_ids)
         deleted_items = []
@@ -1845,18 +1913,7 @@ class ObjectStorageService:
             metadata = self.get_file(file_id, require_active=False)
             if metadata.get("status") != self.STATUS_DELETED:
                 raise HTTPException(status_code=400, detail="Only deleted files can be permanently deleted")
-
-            self.s3.delete_object(
-                Bucket=self.bucket,
-                Key=self.build_file_key(metadata),
-            )
-            self.file_table.delete_item(
-                Key={"file_id": file_id},
-                ConditionExpression="attribute_exists(file_id)",
-            )
-            self.handle_parent_after_child_hard_delete(
-                self.from_storage_parent_folder_id(metadata.get("parent_folder_id"))
-            )
+            self.hard_delete_deleted_file(metadata)
             deleted_items.append({
                 "file_id": file_id,
                 "object_name": metadata.get("file_name"),
@@ -1865,6 +1922,52 @@ class ObjectStorageService:
         return {
             "deleted": deleted_items,
         }
+
+    def hard_delete_deleted_file(self, metadata):
+        file_id = str(metadata.get("file_id") or "").strip()
+        parent_folder_id = self.from_storage_parent_folder_id(metadata.get("parent_folder_id"))
+        deletion_log = self.create_deletion_log(
+            root_id=file_id,
+            root_kind="file",
+            root_parent_id=parent_folder_id,
+            trigger_operation="trash_delete",
+        )
+
+        try:
+            self.mark_file_deletion_pending(file_id, file_id)
+            self.update_deletion_log(
+                deletion_log["log_id"],
+                phase="deleting_s3",
+            )
+            self.s3.delete_object(
+                Bucket=self.bucket,
+                Key=self.build_file_key(metadata),
+            )
+            self.update_deletion_log(
+                deletion_log["log_id"],
+                phase="removing_db_entry",
+            )
+            self.file_table.delete_item(
+                Key={"file_id": file_id},
+                ConditionExpression="attribute_exists(file_id)",
+            )
+            self.handle_parent_after_child_hard_delete(parent_folder_id)
+            self.update_deletion_log(
+                deletion_log["log_id"],
+                status=self.LOG_STATUS_DONE,
+                phase="completed",
+                deleted_files_count=1,
+                completed_at=self.now_iso(),
+            )
+        except Exception as exc:
+            self.restore_file_from_deletion_pending(metadata)
+            self.update_deletion_log(
+                deletion_log["log_id"],
+                status=self.LOG_STATUS_FAILED,
+                phase="failed",
+                last_error=str(exc),
+            )
+            raise
 
     def soft_delete_file(self, metadata):
         if metadata.get("status") != self.STATUS_ACTIVE:

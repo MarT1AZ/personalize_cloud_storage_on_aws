@@ -35,6 +35,14 @@ class Settings:
     move_log_table: str
     purge_log_table: str
     operation_batch_limit: int
+    show_resource_name_on_log: bool
+
+
+def parse_bool_env(name: str, default: bool) -> bool:
+    raw_value = str(os.getenv(name, "")).strip().lower()
+    if not raw_value:
+        return default
+    return raw_value in {"1", "true", "yes", "on"}
 
 
 def build_settings():
@@ -53,6 +61,7 @@ def build_settings():
         )
     except ValueError:
         operation_batch_limit = 100
+    show_resource_name_on_log = parse_bool_env("SHOW_RESOURCE_NAME_ON_LOG", True)
 
     return Settings(
         aws_region=aws_region,
@@ -62,6 +71,7 @@ def build_settings():
         move_log_table=move_log_table,
         purge_log_table=purge_log_table,
         operation_batch_limit=operation_batch_limit,
+        show_resource_name_on_log=show_resource_name_on_log,
     )
 
 
