@@ -97,19 +97,84 @@ button:not(:disabled):active {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 20px;
+  gap: 24px;
+  margin-bottom: 24px;
+}
+
+.header-copy {
+  max-width: 36rem;
 }
 
 .header-actions {
+  display: grid;
+  gap: 14px;
+  justify-items: end;
+  min-width: min(860px, 100%);
+}
+
+.header-toolbar {
+  width: min(920px, 100%);
   display: flex;
-  gap: 10px;
-  align-items: center;
+  gap: 12px;
+  align-items: stretch;
+  justify-content: flex-end;
   flex-wrap: wrap;
+}
+
+.header-action-group {
+  min-width: 0;
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid rgba(47, 62, 86, 0.95);
+  background:
+    linear-gradient(180deg, rgba(22, 31, 46, 0.96) 0%, rgba(14, 20, 31, 0.98) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.header-action-group-critical {
+  background:
+    linear-gradient(135deg, rgba(43, 63, 108, 0.34) 0%, rgba(101, 39, 60, 0.28) 100%),
+    linear-gradient(180deg, rgba(22, 31, 46, 0.96) 0%, rgba(14, 20, 31, 0.98) 100%);
+  border-color: rgba(91, 108, 147, 0.7);
+}
+
+.header-group-label {
+  margin-bottom: 10px;
+  color: #8fa3b8;
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.header-group-buttons {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
 }
 
 .header-mode-button {
   min-width: 92px;
+}
+
+.header-button-content {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.header-button-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1rem;
+  color: #9ec0ff;
+  font-size: 0.95rem;
+  line-height: 1;
+  flex-shrink: 0;
 }
 
 .header-view-button {
@@ -125,6 +190,14 @@ button:not(:disabled):active {
 
 .header-mode-button-active:hover:not(:disabled) {
   filter: brightness(1.06);
+}
+
+.header-mode-button-active .header-button-icon {
+  color: #f8fbff;
+}
+
+.header-logout-button {
+  justify-self: end;
 }
 
 .eyebrow {
@@ -1035,6 +1108,21 @@ input[type="file"]::file-selector-button {
   .file-row,
   .row-actions {
     flex-direction: column;
+  }
+
+  .header-actions {
+    justify-items: stretch;
+    min-width: 0;
+  }
+
+  .header-toolbar,
+  .header-group-buttons {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .header-logout-button {
+    justify-self: stretch;
   }
 
   .secondary-button,
