@@ -13,6 +13,7 @@ import jwt
 from app.aws_error_handling import build_error_result
 from app.auth_config import auth_settings
 from app.config import settings
+from app.resource_guard import ResourceGuard
 
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,7 @@ class ObjectStorageService:
         self.deletion_log_table = self.dynamodb.Table(deletion_log_table)
         self.move_log_table = self.dynamodb.Table(move_log_table)
         self.purge_log_table = self.dynamodb.Table(purge_log_table)
+        self.resource_guard = ResourceGuard(s3_client=self.s3)
         self.operation_batch_limit = max(int(operation_batch_limit or 100), 1)
         self._bucket_region = None
         self._upload_signing_client = None
@@ -179,6 +181,11 @@ class ObjectStorageService:
         if normalized_file_size <= 0:
             raise HTTPException(status_code=400, detail="File size must be greater than 0")
 
+        if self.normalize_id(folder_id):
+            self.resource_guard.tables(self.file_table, self.folder_table)
+        else:
+            self.resource_guard.tables(self.file_table)
+        self.resource_guard.s3_bucket(self.bucket)
         parent_folder = self.get_parent_folder(folder_id)
         parent_folder_id = parent_folder["folder_id"] if parent_folder else None
         final_file_name = self.build_upload_file_name(parent_folder_id, normalized_file_name)
@@ -239,6 +246,8 @@ class ObjectStorageService:
         }
 
     def complete_direct_upload(self, upload_token: str):
+        self.resource_guard.tables(self.file_table)
+        self.resource_guard.s3_bucket(self.bucket)
         payload = self.decode_upload_token(upload_token)
         file_id = self.normalize_id(payload.get("file_id"))
         parent_folder_id = self.normalize_id(payload.get("parent_folder_id")) or None
@@ -297,6 +306,8 @@ class ObjectStorageService:
         }
 
     def create_folder(self, parent_id: str, name: str):
+        self.resource_guard.tables(self.folder_table)
+        self.resource_guard.s3_bucket(self.bucket)
         parent_folder = self.get_parent_folder(parent_id)
         normalized_name = name.strip().strip("/")
         if not normalized_name:
@@ -378,6 +389,8 @@ class ObjectStorageService:
             logger.error("Failed to delete pending folder row [%s]: %s", folder_id, exc)
 
     def get_download_url(self, file_id: str):
+        self.resource_guard.tables(self.file_table)
+        self.resource_guard.s3_bucket(self.bucket)
         metadata = self.get_file(file_id, require_active=True)
         filename = metadata["file_name"] or "download"
         url = self.s3.generate_presigned_url(
@@ -397,6 +410,7 @@ class ObjectStorageService:
         }
 
     def rename_file(self, file_id: str, new_name: str):
+        self.resource_guard.tables(self.file_table, self.folder_table)
         metadata = self.get_file(file_id, require_active=True)
         final_name = self.build_renamed_name(new_name, metadata.get("file_extension", ""))
 
@@ -417,6 +431,7 @@ class ObjectStorageService:
         }
 
     def delete_object(self, entry_id: str):
+        self.resource_guard.tables(self.file_table, self.folder_table)
         file_metadata = self.get_file_or_none(entry_id)
         if file_metadata and file_metadata.get("user_id") == self.user_id:
             return self.soft_delete_file(file_metadata)
@@ -428,6 +443,7 @@ class ObjectStorageService:
         raise HTTPException(status_code=404, detail="Object not found")
 
     def get_purge_state(self):
+        self.resource_guard.tables(self.purge_log_table)
         metadata = self.get_active_purge_log()
         if not metadata:
             return {
@@ -451,6 +467,7 @@ class ObjectStorageService:
         }
 
     def get_move_state(self):
+        self.resource_guard.tables(self.move_log_table)
         metadata = self.get_active_move_log()
         if not metadata:
             return {
@@ -478,6 +495,13 @@ class ObjectStorageService:
         }
 
     def move_entry(self, source_id: str = "", destination_folder_id: str = "", mode: str = MOVE_MODE_MERGE):
+        self.resource_guard.tables(
+            self.file_table,
+            self.folder_table,
+            self.move_log_table,
+            self.purge_log_table,
+        )
+        self.resource_guard.s3_bucket(self.bucket)
         active_delete_log = self.get_active_purge_log()
         if active_delete_log:
             active_root_id = self.get_log_root_id(active_delete_log)
@@ -529,6 +553,13 @@ class ObjectStorageService:
         return self.run_move(log_metadata, resumed=False)
 
     def resume_move(self, log_metadata=None):
+        self.resource_guard.tables(
+            self.file_table,
+            self.folder_table,
+            self.move_log_table,
+            self.purge_log_table,
+        )
+        self.resource_guard.s3_bucket(self.bucket)
         log_metadata = log_metadata or self.get_active_move_log()
         if not log_metadata:
             raise HTTPException(status_code=400, detail="No move is in progress")
@@ -663,6 +694,8 @@ class ObjectStorageService:
         }
 
     def purge_folder(self, folder_id: str = ""):
+        self.resource_guard.tables(self.file_table, self.folder_table, self.purge_log_table)
+        self.resource_guard.s3_bucket(self.bucket)
         normalized_folder_id = self.normalize_id(folder_id)
         active_log = self.get_active_purge_log()
         active_root_id = self.get_log_root_id(active_log) if active_log else ""
@@ -693,6 +726,8 @@ class ObjectStorageService:
         return self.run_purge(log_metadata, resumed=False)
 
     def resume_purge(self, log_metadata=None):
+        self.resource_guard.tables(self.file_table, self.folder_table, self.purge_log_table)
+        self.resource_guard.s3_bucket(self.bucket)
         log_metadata = log_metadata or self.get_active_purge_log()
         if not log_metadata:
             raise HTTPException(status_code=400, detail="No purge is in progress")
@@ -1741,6 +1776,7 @@ class ObjectStorageService:
         return payload
 
     def restore_objects(self, file_ids: list[str]):
+        self.resource_guard.tables(self.file_table, self.folder_table)
         normalized_ids = self.normalize_file_ids(file_ids)
         restored_items = []
 
@@ -1782,6 +1818,7 @@ class ObjectStorageService:
         }
 
     def soft_delete_files(self, file_ids: list[str]):
+        self.resource_guard.tables(self.file_table)
         normalized_ids = self.normalize_file_ids(file_ids)
         deleted_items = []
 
@@ -1799,6 +1836,8 @@ class ObjectStorageService:
         }
 
     def permanently_delete_objects(self, file_ids: list[str]):
+        self.resource_guard.tables(self.file_table, self.folder_table)
+        self.resource_guard.s3_bucket(self.bucket)
         normalized_ids = self.normalize_file_ids(file_ids)
         deleted_items = []
 
