@@ -8,6 +8,8 @@ import WorkspaceSidebar from './components/WorkspaceSidebar';
 const API_BASE = '/api';
 const AUTH_TOKEN_KEY = 'pcs_auth_token';
 const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
+const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
+const PREVIEWABLE_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 
 function normalizeKey(value) {
   return String(value || '').trim().replace(/^\/+/, '');
@@ -71,6 +73,40 @@ function buildRenamedObjectName(rawName, fileExtension = '') {
   }
 
   return normalizedName;
+}
+
+function normalizeExtension(value) {
+  const normalizedValue = String(value || '').trim().toLowerCase();
+  if (!normalizedValue) {
+    return '';
+  }
+  return normalizedValue.startsWith('.') ? normalizedValue : `.${normalizedValue}`;
+}
+
+function getPreviewAvailability(item) {
+  const extension = normalizeExtension(item?.file_extension);
+  if (!PREVIEWABLE_IMAGE_EXTENSIONS.has(extension)) {
+    return {
+      canPreview: false,
+      tag: 'No preview',
+      reason: 'Preview is only available for jpg, png, webp, and gif files.',
+    };
+  }
+
+  const size = Number(item?.size);
+  if (!Number.isFinite(size) || size <= 0 || size > MAX_PREVIEW_BYTES) {
+    return {
+      canPreview: false,
+      tag: 'Too large',
+      reason: 'Preview is only available for image files up to 20 MB.',
+    };
+  }
+
+  return {
+    canPreview: true,
+    tag: '',
+    reason: '',
+  };
 }
 
 function formatBytes(value) {
@@ -178,23 +214,47 @@ async function api(path, options = {}) {
   return payload;
 }
 
-async function uploadToPresignedPost(uploadUrl, uploadFields, file) {
-  const formData = new FormData();
-  Object.entries(uploadFields || {}).forEach(([key, value]) => {
-    formData.append(key, value);
-  });
-  formData.append('file', file);
+function uploadToPresignedPost(uploadUrl, uploadFields, file, options = {}) {
+  const { onProgress } = options;
 
-  const response = await fetch(uploadUrl, {
-    method: 'POST',
-    body: formData,
-  });
+  return new Promise((resolve, reject) => {
+    const formData = new FormData();
+    Object.entries(uploadFields || {}).forEach(([key, value]) => {
+      formData.append(key, value);
+    });
+    formData.append('file', file);
 
-  if (!response.ok) {
-    const payload = await response.text();
-    const message = extractS3UploadError(payload) || `S3 upload failed (${response.status})`;
-    throw new Error(message || 'S3 upload failed');
-  }
+    const request = new XMLHttpRequest();
+    request.open('POST', uploadUrl);
+
+    request.upload.onprogress = (event) => {
+      if (!event.lengthComputable) {
+        return;
+      }
+      onProgress?.(event.loaded, event.total);
+    };
+
+    request.onload = () => {
+      if (request.status >= 200 && request.status < 300) {
+        onProgress?.(file.size, file.size);
+        resolve();
+        return;
+      }
+
+      const message = extractS3UploadError(request.responseText) || `S3 upload failed (${request.status})`;
+      reject(new Error(message || 'S3 upload failed'));
+    };
+
+    request.onerror = () => {
+      reject(new Error('Upload failed before S3 responded'));
+    };
+
+    request.onabort = () => {
+      reject(new Error('Upload was cancelled'));
+    };
+
+    request.send(formData);
+  });
 }
 
 function extractS3UploadError(payload) {
@@ -246,6 +306,10 @@ export default function App() {
   const [success, setSuccess] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadEntries, setUploadEntries] = useState([]);
+  const [previewItem, setPreviewItem] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState('');
+  const [previewLoadingId, setPreviewLoadingId] = useState('');
   const [folderName, setFolderName] = useState('');
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [deleteObjectId, setDeleteObjectId] = useState('');
@@ -318,6 +382,16 @@ export default function App() {
   const visibleFileItems = useMemo(() => visibleItems.filter((item) => item.kind === 'file'), [visibleItems]);
   const selectedDeleteCount = Object.values(selectedDeleteIds).filter(Boolean).length;
 
+  function addUploadEntry(entry) {
+    setUploadEntries((current) => [entry, ...current].slice(0, 6));
+  }
+
+  function updateUploadEntry(entryId, nextValues) {
+    setUploadEntries((current) => current.map((entry) => (
+      entry.id === entryId ? { ...entry, ...nextValues } : entry
+    )));
+  }
+
   function clearWorkspaceState() {
     setFolders([]);
     setFiles([]);
@@ -341,6 +415,10 @@ export default function App() {
     setSuccess('');
     setSelectedFile(null);
     setUploading(false);
+    setUploadEntries([]);
+    setPreviewItem(null);
+    setPreviewUrl('');
+    setPreviewLoadingId('');
     setFolderName('');
     setCreatingFolder(false);
     setDeleteObjectId('');
@@ -677,6 +755,7 @@ export default function App() {
     event.preventDefault();
     if (!selectedFile) return;
     const form = event.currentTarget;
+    const entryId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
     if (selectedFile.size > MAX_UPLOAD_BYTES) {
       setError('File is larger than 1GB.');
@@ -687,6 +766,15 @@ export default function App() {
       setError('');
       setSuccess('');
       setUploading(true);
+      addUploadEntry({
+        id: entryId,
+        name: selectedFile.name,
+        size: selectedFile.size,
+        progress: 0,
+        status: 'preparing',
+        targetPath: currentPath || '/',
+        errorMessage: '',
+      });
       const uploadInit = await api('/upload/init', {
         method: 'POST',
         body: JSON.stringify({
@@ -697,11 +785,24 @@ export default function App() {
         }),
         authToken,
       });
+      updateUploadEntry(entryId, {
+        status: 'uploading',
+      });
 
       await uploadToPresignedPost(
         uploadInit?.upload_url || '',
         uploadInit?.upload_fields || {},
         selectedFile,
+        {
+          onProgress: (loaded, total) => {
+            const safeTotal = total > 0 ? total : selectedFile.size;
+            const progress = safeTotal > 0 ? Math.min(Math.round((loaded / safeTotal) * 100), 100) : 0;
+            updateUploadEntry(entryId, {
+              progress,
+              status: 'uploading',
+            });
+          },
+        },
       );
 
       await api('/upload/complete', {
@@ -711,11 +812,20 @@ export default function App() {
         }),
         authToken,
       });
+      updateUploadEntry(entryId, {
+        progress: 100,
+        status: 'success',
+        errorMessage: '',
+      });
 
       setSelectedFile(null);
       form.reset();
       await loadFiles(currentFolderId, true);
     } catch (err) {
+      updateUploadEntry(entryId, {
+        status: 'failed',
+        errorMessage: err.message || 'Upload failed',
+      });
       setError(err.message || 'Upload failed');
     } finally {
       setUploading(false);
@@ -850,6 +960,37 @@ export default function App() {
     } finally {
       setDownloading('');
     }
+  }
+
+  async function handlePreview(file) {
+    const fileId = normalizeId(file?.file_id);
+    if (!fileId) return;
+
+    const previewAvailability = getPreviewAvailability(file);
+    if (!previewAvailability.canPreview) {
+      return;
+    }
+
+    try {
+      setError('');
+      setSuccess('');
+      setPreviewLoadingId(fileId);
+      const data = await api(`/files/${encodeURIComponent(fileId)}/preview`, { authToken });
+      if (!data?.url) {
+        throw new Error('Preview URL not found');
+      }
+      setPreviewItem(file);
+      setPreviewUrl(data.url);
+    } catch (err) {
+      setError(err.message || 'Preview failed');
+    } finally {
+      setPreviewLoadingId('');
+    }
+  }
+
+  function closePreview() {
+    setPreviewItem(null);
+    setPreviewUrl('');
   }
 
   async function handleCreateFolder(event) {
@@ -1426,6 +1567,8 @@ export default function App() {
               formatDateTime={formatDateTime}
               formatBytes={formatBytes}
               buildRenamedObjectName={buildRenamedObjectName}
+              getPreviewAvailability={getPreviewAvailability}
+              previewLoadingId={previewLoadingId}
               getMoveDestinationBlockReason={getMoveDestinationBlockReason}
               onOpenFolder={handleOpenFolder}
               onOpenParent={handleOpenParent}
@@ -1452,6 +1595,7 @@ export default function App() {
               onRename={handleRename}
               onCancelRename={cancelRename}
               onDownload={handleDownload}
+              onPreview={handlePreview}
             />
           ) : null}
         </div>
@@ -1468,6 +1612,8 @@ export default function App() {
           uploadForm={{
             selectedFile,
             submitting: uploading,
+            uploadEntries,
+            formatBytes,
             onFileChange: handleSelectedFileChange,
             onSubmit: handleUpload,
           }}
@@ -1506,6 +1652,29 @@ export default function App() {
           }}
         />
       </section>
+
+      {previewItem && previewUrl ? (
+        <div className="preview-overlay" onClick={closePreview} role="presentation">
+          <section
+            className="preview-modal"
+            onClick={(event) => event.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Preview ${previewItem.name || 'file'}`}
+          >
+            <div className="preview-head">
+              <div>
+                <div className="preview-title">{previewItem.name || 'Preview'}</div>
+                <div className="preview-meta">{`${formatBytes(previewItem.size)} • ${displayPath(previewItem.path || '')}`}</div>
+              </div>
+              <button className="ghost-button" onClick={closePreview} type="button">Close</button>
+            </div>
+            <div className="preview-body">
+              <img className="preview-image" src={previewUrl} alt={previewItem.name || 'Preview'} />
+            </div>
+          </section>
+        </div>
+      ) : null}
     </main>
   );
 }

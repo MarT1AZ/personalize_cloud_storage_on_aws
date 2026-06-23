@@ -155,6 +155,14 @@ def get_download_url(
     return storage_service.get_download_url(file_id)
 
 
+@app.get("/api/files/{file_id}/preview")
+def get_preview_url(
+    file_id: str,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.get_preview_url(file_id)
+
+
 @app.post("/api/files/{file_id}/rename")
 def rename_file(
     file_id: str,

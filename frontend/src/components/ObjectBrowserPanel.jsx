@@ -144,6 +144,8 @@ function FileRow({
   formatBytes,
   formatDateTime,
   buildRenamedObjectName,
+  getPreviewAvailability,
+  previewLoadingId,
   onToggleDeleteSelection,
   onDelete,
   onAskDelete,
@@ -155,9 +157,11 @@ function FileRow({
   onRename,
   onCancelRename,
   onDownload,
+  onPreview,
 }) {
   const isMoveSource = moveSelectionMode && moveSourceId === item.file_id;
   const renamePreview = buildRenamedObjectName(renameDrafts[item.file_id] || '', item.file_extension || '');
+  const previewAvailability = getPreviewAvailability(item);
 
   return (
     <li
@@ -184,6 +188,11 @@ function FileRow({
           {recentRenames[item.file_id] ? (
             <div className="rename-tag">
               {recentRenames[item.file_id].oldName} {'>>'} {recentRenames[item.file_id].newName}
+            </div>
+          ) : null}
+          {!previewAvailability.canPreview ? (
+            <div className="preview-tag preview-tag-blocked" title={previewAvailability.reason}>
+              {previewAvailability.tag}
             </div>
           ) : null}
         </div>
@@ -260,6 +269,11 @@ function FileRow({
         <button className="ghost-button" onClick={() => onToggleActionMenu(item.file_id)} type="button">
           Actions
         </button>
+        {previewAvailability.canPreview ? (
+          <button className="secondary-button" onClick={() => onPreview(item)} disabled={previewLoadingId === item.file_id} type="button">
+            {previewLoadingId === item.file_id ? 'Opening...' : 'Preview'}
+          </button>
+        ) : null}
         <button className="secondary-button" onClick={() => onDownload(item.file_id)} disabled={downloading === item.file_id} type="button">
           {downloading === item.file_id ? 'Preparing...' : 'Download'}
         </button>
@@ -310,6 +324,8 @@ export default function ObjectBrowserPanel(props) {
     formatDateTime,
     formatBytes,
     buildRenamedObjectName,
+    getPreviewAvailability,
+    previewLoadingId,
     getMoveDestinationBlockReason,
     onOpenFolder,
     onOpenParent,
@@ -336,6 +352,7 @@ export default function ObjectBrowserPanel(props) {
     onRename,
     onCancelRename,
     onDownload,
+    onPreview,
   } = props;
 
   return (
@@ -528,6 +545,8 @@ export default function ObjectBrowserPanel(props) {
                 formatBytes={formatBytes}
                 formatDateTime={formatDateTime}
                 buildRenamedObjectName={buildRenamedObjectName}
+                getPreviewAvailability={getPreviewAvailability}
+                previewLoadingId={previewLoadingId}
                 onToggleDeleteSelection={onToggleDeleteSelection}
                 onDelete={onDelete}
                 onAskDelete={onAskDelete}
@@ -539,6 +558,7 @@ export default function ObjectBrowserPanel(props) {
                 onRename={onRename}
                 onCancelRename={onCancelRename}
                 onDownload={onDownload}
+                onPreview={onPreview}
               />
             );
           })}

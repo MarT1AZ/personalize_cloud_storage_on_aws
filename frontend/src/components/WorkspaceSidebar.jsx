@@ -9,6 +9,12 @@ export default function WorkspaceSidebar({
   helpers,
 }) {
   const { buildFolderPreview, normalizeKey, normalizeId, getCurrentFolderMoveBlockReason } = helpers;
+  const renderUploadStatus = (entry) => {
+    if (entry.status === 'success') return 'Uploaded';
+    if (entry.status === 'failed') return 'Failed';
+    if (entry.status === 'uploading') return `${entry.progress}%`;
+    return 'Preparing...';
+  };
 
   return (
     <aside className="side-column">
@@ -44,6 +50,31 @@ export default function WorkspaceSidebar({
               <button className="primary-button" type="submit" disabled={!uploadForm.selectedFile || uploadForm.submitting}>
                 {uploadForm.submitting ? 'Uploading...' : 'Upload'}
               </button>
+              {uploadForm.uploadEntries?.length ? (
+                <div className="upload-activity-list">
+                  {uploadForm.uploadEntries.map((entry) => (
+                    <div
+                      className={`upload-activity-card upload-activity-${entry.status}`}
+                      key={entry.id}
+                    >
+                      <div className="upload-activity-head">
+                        <div className="upload-activity-name">{entry.name}</div>
+                        <div className="upload-activity-percent">{renderUploadStatus(entry)}</div>
+                      </div>
+                      <div className="upload-activity-meta">
+                        <span>{entry.targetPath || '/'}</span>
+                        <span>{uploadForm.formatBytes?.(entry.size) || ''}</span>
+                      </div>
+                      <div className="upload-progress-track" aria-hidden="true">
+                        <div className="upload-progress-fill" style={{ width: `${entry.progress || 0}%` }} />
+                      </div>
+                      {entry.errorMessage ? (
+                        <div className="upload-activity-error">{entry.errorMessage}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
             </form>
           </section>
 

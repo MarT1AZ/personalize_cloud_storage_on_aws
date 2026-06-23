@@ -409,6 +409,26 @@ class ObjectStorageService:
             "expires_in": 60,
         }
 
+    def get_preview_url(self, file_id: str):
+        self.resource_guard.tables(self.file_table)
+        self.resource_guard.s3_bucket(self.bucket)
+        metadata = self.get_file(file_id, require_active=True)
+        url = self.s3.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": self.build_file_key(metadata),
+            },
+            ExpiresIn=60,
+        )
+
+        return {
+            "file_id": file_id,
+            "file_name": metadata.get("file_name") or "",
+            "url": url,
+            "expires_in": 60,
+        }
+
     def rename_file(self, file_id: str, new_name: str):
         self.resource_guard.tables(self.file_table, self.folder_table)
         metadata = self.get_file(file_id, require_active=True)
