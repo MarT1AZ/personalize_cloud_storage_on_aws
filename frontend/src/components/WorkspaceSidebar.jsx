@@ -15,6 +15,10 @@ export default function WorkspaceSidebar({
     if (entry.status === 'uploading') return `${entry.progress}%`;
     return 'Preparing...';
   };
+  const renderUploadMode = (entry) => {
+    if (entry.mode === 'replace') return 'Replace mode';
+    return 'New file';
+  };
 
   return (
     <aside className="side-column">
@@ -45,7 +49,20 @@ export default function WorkspaceSidebar({
                 <span>Select file</span>
                 <input type="file" onChange={uploadForm.onFileChange} />
               </label>
+              <label className="sidebar-toggle">
+                <input
+                  type="checkbox"
+                  checked={!!uploadForm.replaceExisting}
+                  onChange={uploadForm.onReplaceExistingChange}
+                />
+                <span>Replace same-name file</span>
+              </label>
               <div className="sidebar-note">To: {currentPath || '/'}</div>
+              <div className="sidebar-note">
+                {uploadForm.replaceExisting
+                  ? 'If a file with the same name already exists here, the new upload will replace it.'
+                  : 'If the same name already exists, a copied name will be created.'}
+              </div>
               <div className="sidebar-note">Limit: 1GB</div>
               <button className="primary-button" type="submit" disabled={!uploadForm.selectedFile || uploadForm.submitting}>
                 {uploadForm.submitting ? 'Uploading...' : 'Upload'}
@@ -64,6 +81,9 @@ export default function WorkspaceSidebar({
                       <div className="upload-activity-meta">
                         <span>{entry.targetPath || '/'}</span>
                         <span>{uploadForm.formatBytes?.(entry.size) || ''}</span>
+                      </div>
+                      <div className="upload-activity-mode">
+                        {renderUploadMode(entry)}
                       </div>
                       <div className="upload-progress-track" aria-hidden="true">
                         <div className="upload-progress-fill" style={{ width: `${entry.progress || 0}%` }} />

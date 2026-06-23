@@ -36,6 +36,11 @@ class ObjectStorageService:
     STATUS_DELETED = "deleted"
     STATUS_MOVED = "moved"
     STATUS_PENDING = "pending"
+    STATUS_REPLACEMENT_PENDING_DELETE = "replacement_pending_delete"
+    REPLACEMENT_DELETE_STATUS_PENDING = "pending_delete"
+    REPLACEMENT_DELETE_STATUS_DELETED = "deleted"
+    REPLACEMENT_DELETE_STATUS_RESTORED = "restored"
+    REPLACEMENT_DELETE_STATUS_FAILED = "failed"
     MAX_UPLOAD_BYTES = 1024 * 1024 * 1024
     DIRECT_UPLOAD_EXPIRES_SECONDS = 900
 
@@ -46,6 +51,7 @@ class ObjectStorageService:
         file_metadata_table: str,
         folder_metadata_table: str,
         deletion_log_table: str,
+        replacement_table: str,
         move_log_table: str,
         purge_log_table: str,
         operation_batch_limit: int = 100,
@@ -59,6 +65,7 @@ class ObjectStorageService:
         self.file_table = self.dynamodb.Table(file_metadata_table)
         self.folder_table = self.dynamodb.Table(folder_metadata_table)
         self.deletion_log_table = self.dynamodb.Table(deletion_log_table)
+        self.replacement_table = self.dynamodb.Table(replacement_table)
         self.move_log_table = self.dynamodb.Table(move_log_table)
         self.purge_log_table = self.dynamodb.Table(purge_log_table)
         self.resource_guard = ResourceGuard(s3_client=self.s3)
@@ -172,7 +179,14 @@ class ObjectStorageService:
             "tree": root_node,
         }
 
-    def start_direct_upload(self, file_name: str, file_size: int, file_type: str = "", folder_id: str = ""):
+    def start_direct_upload(
+        self,
+        file_name: str,
+        file_size: int,
+        file_type: str = "",
+        folder_id: str = "",
+        replace_existing: bool = False,
+    ):
         normalized_file_name = str(file_name or "").strip()
         if not normalized_file_name:
             raise HTTPException(status_code=400, detail="File name is required")
@@ -182,13 +196,47 @@ class ObjectStorageService:
             raise HTTPException(status_code=400, detail="File size must be greater than 0")
 
         if self.normalize_id(folder_id):
-            self.resource_guard.tables(self.file_table, self.folder_table)
+            if replace_existing:
+                self.resource_guard.tables(self.file_table, self.folder_table, self.replacement_table)
+            else:
+                self.resource_guard.tables(self.file_table, self.folder_table)
         else:
-            self.resource_guard.tables(self.file_table)
+            if replace_existing:
+                self.resource_guard.tables(self.file_table, self.replacement_table)
+            else:
+                self.resource_guard.tables(self.file_table)
         self.resource_guard.s3_bucket(self.bucket)
         parent_folder = self.get_parent_folder(folder_id)
         parent_folder_id = parent_folder["folder_id"] if parent_folder else None
-        final_file_name = self.build_upload_file_name(parent_folder_id, normalized_file_name)
+        existing_file = None
+        replacement_log = None
+        replacing_file_id = ""
+        replacement_operation_id = ""
+
+        if replace_existing:
+            existing_file = self.find_file_by_name(
+                parent_folder_id,
+                normalized_file_name,
+                statuses={self.STATUS_ACTIVE},
+            )
+            final_file_name = normalized_file_name
+            if existing_file:
+                replacement_log = self.create_replacement_log(
+                    old_file_id=existing_file["file_id"],
+                    new_file_id="",
+                    file_name=normalized_file_name,
+                )
+                replacing_file_id = existing_file["file_id"]
+                replacement_operation_id = replacement_log["operation_id"]
+                self.mark_file_replacement_pending_delete(existing_file)
+                self.update_replacement_log(
+                    replacement_log["log_id"],
+                    phase="uploading_new",
+                    old_file_delete_status=self.REPLACEMENT_DELETE_STATUS_PENDING,
+                    old_file_marked_at=self.now_iso(),
+                )
+        else:
+            final_file_name = self.build_upload_file_name(parent_folder_id, normalized_file_name)
         file_id = self.generate_short_id()
         now = datetime.now(timezone.utc)
 
@@ -208,6 +256,13 @@ class ObjectStorageService:
             ConditionExpression="attribute_not_exists(file_id)",
         )
 
+        if replacement_log:
+            self.update_replacement_log(
+                replacement_log["log_id"],
+                phase="pending_upload_session",
+                new_file_id=file_id,
+            )
+
         upload_token = self.encode_upload_token(
             file_id=file_id,
             parent_folder_id=parent_folder_id,
@@ -216,6 +271,9 @@ class ObjectStorageService:
             content_type=str(file_type or "").strip(),
             object_key=object_key,
             issued_at=now,
+            replacement_log_id=replacement_log["log_id"] if replacement_log else "",
+            replacement_operation_id=replacement_operation_id,
+            replacing_file_id=replacing_file_id,
         )
 
         presigned_post_kwargs = {
@@ -234,6 +292,15 @@ class ObjectStorageService:
             presigned_post = self.get_upload_signing_client().generate_presigned_post(**presigned_post_kwargs)
         except Exception:
             self.delete_pending_file_row(file_id)
+            if existing_file and replacement_log:
+                self.restore_file_from_replacement_pending_delete(existing_file)
+                self.update_replacement_log(
+                    replacement_log["log_id"],
+                    status=self.LOG_STATUS_FAILED,
+                    phase="failed",
+                    last_error="Could not create upload session",
+                    old_file_delete_status=self.REPLACEMENT_DELETE_STATUS_RESTORED,
+                )
             raise
 
         return {
@@ -243,11 +310,11 @@ class ObjectStorageService:
             "upload_url": presigned_post["url"],
             "upload_fields": presigned_post["fields"],
             "max_upload_bytes": self.MAX_UPLOAD_BYTES,
+            "replacement_active": bool(replacing_file_id),
+            "replaced_file_id": replacing_file_id,
         }
 
     def complete_direct_upload(self, upload_token: str):
-        self.resource_guard.tables(self.file_table)
-        self.resource_guard.s3_bucket(self.bucket)
         payload = self.decode_upload_token(upload_token)
         file_id = self.normalize_id(payload.get("file_id"))
         parent_folder_id = self.normalize_id(payload.get("parent_folder_id")) or None
@@ -255,6 +322,15 @@ class ObjectStorageService:
         file_extension = str(payload.get("file_extension") or "").strip()
         content_type = str(payload.get("content_type") or "").strip()
         object_key = str(payload.get("object_key") or "").strip()
+        replacement_log_id = self.normalize_id(payload.get("replacement_log_id"))
+        replacement_operation_id = self.normalize_id(payload.get("replacement_operation_id"))
+        replacing_file_id = self.normalize_id(payload.get("replacing_file_id"))
+
+        if replacing_file_id:
+            self.resource_guard.tables(self.file_table, self.replacement_table, self.deletion_log_table)
+        else:
+            self.resource_guard.tables(self.file_table)
+        self.resource_guard.s3_bucket(self.bucket)
 
         if not file_id or not file_name or not object_key:
             raise HTTPException(status_code=400, detail="Upload token is missing required file metadata")
@@ -282,27 +358,78 @@ class ObjectStorageService:
         if content_type and head_response.get("ContentType") and head_response.get("ContentType") != content_type:
             raise HTTPException(status_code=400, detail="Uploaded file content type does not match the upload session")
 
+        replacement_metadata = None
+        replacement_succeeded = False
+        new_file_activated = False
+        if replacing_file_id:
+            replacement_metadata = self.get_file(replacing_file_id, require_active=False)
+            if replacement_metadata.get("status") != self.STATUS_REPLACEMENT_PENDING_DELETE:
+                raise HTTPException(status_code=409, detail="Replacement session is no longer valid")
+
         try:
-            self.file_table.update_item(
-                Key={"file_id": file_id},
-                UpdateExpression="SET file_name = :file_name, file_extension = :file_extension, #status = :status, deleted_at = :deleted_at",
-                ExpressionAttributeNames={"#status": "status"},
-                ExpressionAttributeValues={
-                    ":file_name": file_name,
-                    ":file_extension": file_extension or self.get_file_extension(file_name),
-                    ":status": self.STATUS_ACTIVE,
-                    ":deleted_at": None,
-                    ":pending_status": self.STATUS_PENDING,
-                },
-                ConditionExpression="attribute_exists(file_id) AND #status = :pending_status",
-            )
-        except ClientError as exc:
+            if replacement_log_id:
+                self.update_replacement_log(
+                    replacement_log_id,
+                    phase="finalizing_new",
+                )
+            self.mark_upload_file_active(file_id, file_name, file_extension)
+            new_file_activated = True
+            if replacing_file_id and replacement_metadata:
+                if replacement_log_id:
+                    self.update_replacement_log(
+                        replacement_log_id,
+                        phase="deleting_old",
+                    )
+                self.hard_delete_replaced_file(
+                    replacement_metadata,
+                    operation_id=replacement_operation_id,
+                )
+                if replacement_log_id:
+                    self.update_replacement_log(
+                        replacement_log_id,
+                        status=self.LOG_STATUS_DONE,
+                        phase="completed",
+                        new_file_id=file_id,
+                        old_file_delete_status=self.REPLACEMENT_DELETE_STATUS_DELETED,
+                        old_file_deleted_at=self.now_iso(),
+                        completed_at=self.now_iso(),
+                        last_error="",
+                    )
+                replacement_succeeded = True
+            else:
+                self.increment_children_count(parent_folder_id)
+        except Exception as exc:
+            if replacing_file_id and replacement_metadata and not new_file_activated:
+                self.rollback_replacement_upload(
+                    new_file_metadata=metadata,
+                    old_file_metadata=replacement_metadata,
+                    object_key=object_key,
+                )
+            if replacement_log_id:
+                self.update_replacement_log(
+                    replacement_log_id,
+                    status=self.LOG_STATUS_FAILED,
+                    phase="failed",
+                    last_error=str(exc),
+                    new_file_id=file_id,
+                    old_file_delete_status=(
+                        self.REPLACEMENT_DELETE_STATUS_FAILED
+                        if new_file_activated
+                        else self.REPLACEMENT_DELETE_STATUS_RESTORED
+                    ),
+                )
+            if replacing_file_id and new_file_activated:
+                raise HTTPException(
+                    status_code=409,
+                    detail="New file uploaded, but old file cleanup failed. Check the replacement log before retrying.",
+                ) from exc
             raise HTTPException(status_code=409, detail="Upload session could not be finalized") from exc
-        self.increment_children_count(parent_folder_id)
 
         return {
             "uploaded": file_id,
             "object_name": file_name,
+            "replacement_completed": replacement_succeeded,
+            "replacement_operation_id": replacement_operation_id,
         }
 
     def create_folder(self, parent_id: str, name: str):
@@ -366,6 +493,127 @@ class ObjectStorageService:
             )
         except Exception as exc:
             logger.error("Failed to delete pending file row [%s]: %s", file_id, exc)
+
+    def mark_upload_file_active(self, file_id: str, file_name: str, file_extension: str):
+        self.file_table.update_item(
+            Key={"file_id": file_id},
+            UpdateExpression="SET file_name = :file_name, file_extension = :file_extension, #status = :status, deleted_at = :deleted_at",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":file_name": file_name,
+                ":file_extension": file_extension or self.get_file_extension(file_name),
+                ":status": self.STATUS_ACTIVE,
+                ":deleted_at": None,
+                ":pending_status": self.STATUS_PENDING,
+            },
+            ConditionExpression="attribute_exists(file_id) AND #status = :pending_status",
+        )
+
+    def mark_file_replacement_pending_delete(self, metadata):
+        self.file_table.update_item(
+            Key={"file_id": metadata["file_id"]},
+            UpdateExpression="SET #status = :status, to_be_deleted = :to_be_deleted",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":status": self.STATUS_REPLACEMENT_PENDING_DELETE,
+                ":to_be_deleted": True,
+                ":active_status": self.STATUS_ACTIVE,
+            },
+            ConditionExpression="attribute_exists(file_id) AND #status = :active_status",
+        )
+
+    def restore_file_from_replacement_pending_delete(self, metadata):
+        self.file_table.update_item(
+            Key={"file_id": metadata["file_id"]},
+            UpdateExpression="SET #status = :status, to_be_deleted = :to_be_deleted",
+            ExpressionAttributeNames={"#status": "status"},
+            ExpressionAttributeValues={
+                ":status": self.STATUS_ACTIVE,
+                ":to_be_deleted": False,
+                ":replacement_status": self.STATUS_REPLACEMENT_PENDING_DELETE,
+            },
+            ConditionExpression="attribute_exists(file_id) AND #status = :replacement_status",
+        )
+
+    def delete_replaced_file(self, metadata):
+        self.s3.delete_object(
+            Bucket=self.bucket,
+            Key=self.build_file_key(metadata),
+        )
+        self.file_table.delete_item(
+            Key={"file_id": metadata["file_id"]},
+            ConditionExpression="attribute_exists(file_id)",
+        )
+
+    def hard_delete_replaced_file(self, metadata, *, operation_id: str):
+        file_id = str(metadata.get("file_id") or "").strip()
+        parent_folder_id = self.from_storage_parent_folder_id(metadata.get("parent_folder_id"))
+        deletion_log = self.create_deletion_log(
+            root_id=file_id,
+            root_kind="file",
+            root_parent_id=parent_folder_id,
+            trigger_operation="replacement_delete",
+            operation_id=operation_id,
+        )
+
+        try:
+            self.mark_file_deletion_pending(file_id, file_id)
+            self.update_deletion_log(
+                deletion_log["log_id"],
+                phase="deleting_s3",
+            )
+            self.s3.delete_object(
+                Bucket=self.bucket,
+                Key=self.build_file_key(metadata),
+            )
+            self.update_deletion_log(
+                deletion_log["log_id"],
+                phase="removing_db_entry",
+            )
+            self.file_table.delete_item(
+                Key={"file_id": file_id},
+                ConditionExpression="attribute_exists(file_id)",
+            )
+            self.update_deletion_log(
+                deletion_log["log_id"],
+                status=self.LOG_STATUS_DONE,
+                phase="completed",
+                deleted_files_count=1,
+                completed_at=self.now_iso(),
+            )
+        except Exception as exc:
+            self.update_deletion_log(
+                deletion_log["log_id"],
+                status=self.LOG_STATUS_FAILED,
+                phase="failed",
+                last_error=str(exc),
+            )
+            raise
+
+    def rollback_replacement_upload(self, *, new_file_metadata, old_file_metadata, object_key: str):
+        new_file_id = str(new_file_metadata.get("file_id") or "").strip()
+        if object_key:
+            try:
+                self.s3.delete_object(
+                    Bucket=self.bucket,
+                    Key=object_key,
+                )
+            except Exception as exc:
+                logger.error("Failed to roll back replacement S3 object for file [%s]: %s", new_file_id, exc)
+
+        if new_file_id:
+            try:
+                self.file_table.delete_item(
+                    Key={"file_id": new_file_id},
+                    ConditionExpression="attribute_exists(file_id)",
+                )
+            except Exception as exc:
+                logger.error("Failed to roll back replacement file row [%s]: %s", new_file_id, exc)
+
+        try:
+            self.restore_file_from_replacement_pending_delete(old_file_metadata)
+        except Exception as exc:
+            logger.error("Failed to restore replacement source file [%s]: %s", old_file_metadata.get("file_id"), exc)
 
     def rollback_pending_folder_row(self, metadata):
         folder_id = str(metadata.get("folder_id") or "").strip()
@@ -1394,11 +1642,12 @@ class ObjectStorageService:
         root_kind: str,
         root_parent_id: str | None,
         trigger_operation: str,
+        operation_id: str = "",
     ):
         now = self.now_iso()
         metadata = {
             "log_id": self.generate_short_id(),
-            "operation_id": self.generate_short_id(),
+            "operation_id": operation_id or self.generate_short_id(),
             "user_id": self.user_id,
             "operation_type": self.LOG_OPERATION_DELETE,
             "root_entry_id": root_id,
@@ -1415,6 +1664,41 @@ class ObjectStorageService:
             "deleted_folders_count": 0,
         }
         self.deletion_log_table.put_item(Item=metadata)
+        return metadata
+
+    def create_replacement_log(
+        self,
+        *,
+        old_file_id: str,
+        new_file_id: str,
+        file_name: str,
+        preceding_log_id: str = "",
+        attempt: int = 1,
+        is_resumed: bool = False,
+        phase: str = "marking_old_pending_delete",
+    ):
+        now = self.now_iso()
+        metadata = {
+            "log_id": self.generate_short_id(),
+            "operation_id": self.generate_short_id(),
+            "user_id": self.user_id,
+            "status": self.LOG_STATUS_RUNNING,
+            "phase": phase,
+            "last_error": "",
+            "is_resumed": bool(is_resumed),
+            "old_file_id": old_file_id,
+            "new_file_id": new_file_id,
+            "file_name": file_name,
+            "preceding_log_id": preceding_log_id,
+            "attempt": max(int(attempt or 1), 1),
+            "old_file_delete_status": "",
+            "old_file_marked_at": "",
+            "old_file_deleted_at": "",
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": "",
+        }
+        self.replacement_table.put_item(Item=metadata)
         return metadata
 
     def create_purge_log(
@@ -1604,6 +1888,74 @@ class ObjectStorageService:
             update_kwargs["ExpressionAttributeNames"] = expression_attribute_names
 
         self.deletion_log_table.update_item(**update_kwargs)
+
+    def update_replacement_log(
+        self,
+        log_id: str,
+        *,
+        status: str | None = None,
+        phase: str | None = None,
+        last_error: str | None = None,
+        new_file_id: str | None = None,
+        preceding_log_id: str | None = None,
+        attempt: int | None = None,
+        is_resumed: bool | None = None,
+        old_file_delete_status: str | None = None,
+        old_file_marked_at: str | None = None,
+        old_file_deleted_at: str | None = None,
+        completed_at: str | None = None,
+    ):
+        update_parts = ["updated_at = :updated_at"]
+        expression_attribute_names = {}
+        expression_attribute_values = {
+            ":updated_at": self.now_iso(),
+        }
+
+        if status is not None:
+            update_parts.append("#status = :status")
+            expression_attribute_names["#status"] = "status"
+            expression_attribute_values[":status"] = status
+        if phase is not None:
+            update_parts.append("phase = :phase")
+            expression_attribute_values[":phase"] = phase
+        if last_error is not None:
+            update_parts.append("last_error = :last_error")
+            expression_attribute_values[":last_error"] = last_error
+        if new_file_id is not None:
+            update_parts.append("new_file_id = :new_file_id")
+            expression_attribute_values[":new_file_id"] = new_file_id
+        if preceding_log_id is not None:
+            update_parts.append("preceding_log_id = :preceding_log_id")
+            expression_attribute_values[":preceding_log_id"] = preceding_log_id
+        if attempt is not None:
+            update_parts.append("attempt = :attempt")
+            expression_attribute_values[":attempt"] = max(int(attempt or 1), 1)
+        if is_resumed is not None:
+            update_parts.append("is_resumed = :is_resumed")
+            expression_attribute_values[":is_resumed"] = bool(is_resumed)
+        if old_file_delete_status is not None:
+            update_parts.append("old_file_delete_status = :old_file_delete_status")
+            expression_attribute_values[":old_file_delete_status"] = old_file_delete_status
+        if old_file_marked_at is not None:
+            update_parts.append("old_file_marked_at = :old_file_marked_at")
+            expression_attribute_values[":old_file_marked_at"] = old_file_marked_at
+        if old_file_deleted_at is not None:
+            update_parts.append("old_file_deleted_at = :old_file_deleted_at")
+            expression_attribute_values[":old_file_deleted_at"] = old_file_deleted_at
+        if completed_at is not None:
+            update_parts.append("completed_at = :completed_at")
+            expression_attribute_values[":completed_at"] = completed_at
+
+        update_kwargs = {
+            "Key": {"log_id": log_id},
+            "UpdateExpression": "SET " + ", ".join(update_parts),
+            "ExpressionAttributeValues": expression_attribute_values,
+            "ConditionExpression": "attribute_exists(log_id)",
+        }
+        if expression_attribute_names:
+            update_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+        self.replacement_table.update_item(**update_kwargs)
 
     def update_purge_log(
         self,
@@ -1831,6 +2183,9 @@ class ObjectStorageService:
         content_type: str,
         object_key: str,
         issued_at: datetime,
+        replacement_log_id: str = "",
+        replacement_operation_id: str = "",
+        replacing_file_id: str = "",
     ):
         expires_at = int(issued_at.timestamp()) + self.DIRECT_UPLOAD_EXPIRES_SECONDS
         return jwt.encode(
@@ -1842,6 +2197,9 @@ class ObjectStorageService:
                 "file_extension": file_extension,
                 "content_type": content_type,
                 "object_key": object_key,
+                "replacement_log_id": replacement_log_id,
+                "replacement_operation_id": replacement_operation_id,
+                "replacing_file_id": replacing_file_id,
                 "exp": expires_at,
             },
             auth_settings.jwt_secret,
@@ -2406,6 +2764,32 @@ class ObjectStorageService:
             and item.get("status") == "active"
             for item in items
         )
+
+    def find_file_by_name(
+        self,
+        parent_folder_id: str | None,
+        file_name: str,
+        *,
+        statuses: set[str],
+        ignore_file_id: str | None = None,
+    ):
+        items = self.query_items_by_parent(
+            table=self.file_table,
+            parent_folder_id=parent_folder_id,
+        )
+        for item in sorted(items, key=lambda value: ((value.get("created_at") or ""), value.get("file_id") or "")):
+            if item.get("user_id") != self.user_id:
+                continue
+            if item.get("file_id") == ignore_file_id:
+                continue
+            if not self.same_parent_folder(self.from_storage_parent_folder_id(item.get("parent_folder_id")), parent_folder_id):
+                continue
+            if item.get("file_name") != file_name:
+                continue
+            if item.get("status") not in statuses:
+                continue
+            return item
+        return None
 
     def has_active_folder_with_name(self, parent_folder_id: str | None, folder_name: str, ignore_folder_id: str | None = None):
         items = self.query_items_by_parent(

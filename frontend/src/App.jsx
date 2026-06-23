@@ -305,6 +305,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
+  const [replaceExistingUpload, setReplaceExistingUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadEntries, setUploadEntries] = useState([]);
   const [previewItem, setPreviewItem] = useState(null);
@@ -414,6 +415,7 @@ export default function App() {
     setError('');
     setSuccess('');
     setSelectedFile(null);
+    setReplaceExistingUpload(false);
     setUploading(false);
     setUploadEntries([]);
     setPreviewItem(null);
@@ -773,6 +775,7 @@ export default function App() {
         progress: 0,
         status: 'preparing',
         targetPath: currentPath || '/',
+        mode: replaceExistingUpload ? 'replace' : 'upload',
         errorMessage: '',
       });
       const uploadInit = await api('/upload/init', {
@@ -782,6 +785,7 @@ export default function App() {
           file_size: selectedFile.size,
           file_type: selectedFile.type || '',
           folder_id: currentFolderId,
+          replace_existing: replaceExistingUpload,
         }),
         authToken,
       });
@@ -819,6 +823,7 @@ export default function App() {
       });
 
       setSelectedFile(null);
+      setReplaceExistingUpload(false);
       form.reset();
       await loadFiles(currentFolderId, true);
     } catch (err) {
@@ -1611,10 +1616,12 @@ export default function App() {
           }}
           uploadForm={{
             selectedFile,
+            replaceExisting: replaceExistingUpload,
             submitting: uploading,
             uploadEntries,
             formatBytes,
             onFileChange: handleSelectedFileChange,
+            onReplaceExistingChange: (event) => setReplaceExistingUpload(event.target.checked),
             onSubmit: handleUpload,
           }}
           purgeControls={{

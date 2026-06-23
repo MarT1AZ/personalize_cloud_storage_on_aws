@@ -51,6 +51,7 @@ class UploadInitRequest(BaseModel):
     file_size: int
     file_type: str = ""
     folder_id: str = ""
+    replace_existing: bool = False
 
 
 class UploadCompleteRequest(BaseModel):
@@ -74,10 +75,11 @@ app.include_router(auth_router)
 def get_storage_service(current_user: UserProfile = Depends(get_authenticated_user)):
     return ObjectStorageService(
         bucket=current_user.bucket.main_bucket,
-        user_id=current_user.username,
+        user_id=current_user.user_id,
         file_metadata_table=settings.file_metadata_table,
         folder_metadata_table=settings.folder_metadata_table,
         deletion_log_table=settings.deletion_log_table,
+        replacement_table=settings.replacement_table,
         move_log_table=settings.move_log_table,
         purge_log_table=settings.purge_log_table,
         operation_batch_limit=settings.operation_batch_limit,
@@ -136,6 +138,7 @@ def upload_init(
         file_size=request.file_size,
         file_type=request.file_type,
         folder_id=request.folder_id,
+        replace_existing=request.replace_existing,
     )
 
 

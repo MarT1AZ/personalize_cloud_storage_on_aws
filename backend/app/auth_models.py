@@ -12,6 +12,7 @@ class BucketInfo(BaseModel):
 
 
 class UserProfile(BaseModel):
+    user_id: str
     username: str
     bucket: BucketInfo
 

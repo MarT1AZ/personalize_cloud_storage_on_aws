@@ -40,7 +40,12 @@ class AuthService:
         if not bucket_name:
             return None
 
+        resolved_user_id = str(user_item.get("user-id") or "").strip()
+        if not resolved_user_id:
+            return None
+
         return UserProfile(
+            user_id=resolved_user_id,
             username=str(user_item.get("username") or "").strip(),
             bucket=BucketInfo(
                 main_bucket=bucket_name,

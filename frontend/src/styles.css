@@ -995,6 +995,27 @@ input[type="file"]::file-selector-button {
   line-height: 1.55;
 }
 
+.sidebar-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #212d3d;
+  background:
+    linear-gradient(135deg, rgba(50, 89, 171, 0.14) 0%, rgba(143, 46, 94, 0.08) 100%),
+    linear-gradient(180deg, #101723 0%, #0d131b 100%);
+  color: #dce5ef;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.sidebar-toggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: #d45f8d;
+}
+
 .sidebar-status-grid {
   display: grid;
   gap: 8px;
@@ -1101,6 +1122,14 @@ input[type="file"]::file-selector-button {
 .upload-activity-meta {
   color: #8fa3b8;
   font-size: 0.77rem;
+}
+
+.upload-activity-mode {
+  color: #a8bacf;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .upload-progress-track {
