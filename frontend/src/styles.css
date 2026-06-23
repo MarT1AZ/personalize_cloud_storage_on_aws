@@ -1226,6 +1226,116 @@ input[type="file"]::file-selector-button {
   border-radius: 10px;
 }
 
+.preview-document {
+  width: min(100%, 920px);
+  min-height: 70vh;
+  border: 1px solid rgba(39, 52, 74, 0.92);
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.preview-code {
+  width: min(100%, 960px);
+  min-height: 70vh;
+  max-height: 70vh;
+  overflow: auto;
+  border: 1px solid rgba(39, 52, 74, 0.92);
+  border-radius: 10px;
+  background: #0a0f16;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.preview-code-lines {
+  display: grid;
+  min-width: 100%;
+  font-family: 'Consolas', 'SFMono-Regular', 'Menlo', monospace;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.preview-code-line {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: start;
+}
+
+.preview-code-line:nth-child(odd) {
+  background: rgba(16, 23, 35, 0.7);
+}
+
+.preview-code-line-number {
+  position: sticky;
+  left: 0;
+  padding: 0 14px 0 12px;
+  color: #6f8198;
+  text-align: right;
+  user-select: none;
+  background: inherit;
+  border-right: 1px solid rgba(39, 52, 74, 0.92);
+}
+
+.preview-code-line-content {
+  display: block;
+  margin: 0;
+  padding: 0 14px;
+  color: #dce5ef;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.preview-code-line-content .token.comment,
+.preview-code-line-content .token.prolog,
+.preview-code-line-content .token.doctype,
+.preview-code-line-content .token.cdata {
+  color: #7a8da6;
+}
+
+.preview-code-line-content .token.punctuation {
+  color: #b8c6d8;
+}
+
+.preview-code-line-content .token.property,
+.preview-code-line-content .token.tag,
+.preview-code-line-content .token.boolean,
+.preview-code-line-content .token.number,
+.preview-code-line-content .token.constant,
+.preview-code-line-content .token.symbol,
+.preview-code-line-content .token.deleted {
+  color: #f3a86f;
+}
+
+.preview-code-line-content .token.selector,
+.preview-code-line-content .token.attr-name,
+.preview-code-line-content .token.string,
+.preview-code-line-content .token.char,
+.preview-code-line-content .token.builtin,
+.preview-code-line-content .token.inserted {
+  color: #a8df8e;
+}
+
+.preview-code-line-content .token.operator,
+.preview-code-line-content .token.entity,
+.preview-code-line-content .token.url,
+.preview-code-line-content .token.variable {
+  color: #8fd4ff;
+}
+
+.preview-code-line-content .token.atrule,
+.preview-code-line-content .token.attr-value,
+.preview-code-line-content .token.function,
+.preview-code-line-content .token.class-name {
+  color: #7eb6ff;
+}
+
+.preview-code-line-content .token.keyword {
+  color: #f08ab0;
+}
+
+.preview-code-line-content .token.regex,
+.preview-code-line-content .token.important {
+  color: #ffd479;
+}
+
 .sidebar-button-stack {
   display: grid;
   gap: 10px;

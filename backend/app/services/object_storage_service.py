@@ -677,6 +677,24 @@ class ObjectStorageService:
             "expires_in": 60,
         }
 
+    def get_preview_text(self, file_id: str):
+        self.resource_guard.tables(self.file_table)
+        self.resource_guard.s3_bucket(self.bucket)
+        metadata = self.get_file(file_id, require_active=True)
+
+        response = self.s3.get_object(
+            Bucket=self.bucket,
+            Key=self.build_file_key(metadata),
+        )
+        raw_body = response.get("Body")
+        content_bytes = raw_body.read() if raw_body is not None else b""
+
+        return {
+            "file_id": file_id,
+            "file_name": metadata.get("file_name") or "",
+            "content": content_bytes.decode("utf-8", errors="replace"),
+        }
+
     def rename_file(self, file_id: str, new_name: str):
         self.resource_guard.tables(self.file_table, self.folder_table)
         metadata = self.get_file(file_id, require_active=True)

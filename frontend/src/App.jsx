@@ -1,4 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
+import Prism from 'prismjs';
+import 'prismjs/components/prism-clike';
+import 'prismjs/components/prism-markup';
+import 'prismjs/components/prism-css';
+import 'prismjs/components/prism-javascript';
+import 'prismjs/components/prism-jsx';
+import 'prismjs/components/prism-typescript';
+import 'prismjs/components/prism-tsx';
+import 'prismjs/components/prism-json';
+import 'prismjs/components/prism-python';
+import 'prismjs/components/prism-markdown';
+import 'prismjs/components/prism-yaml';
+import 'prismjs/components/prism-xml-doc';
 import LoginScreen from './components/LoginScreen';
 import ObjectBrowserPanel from './components/ObjectBrowserPanel';
 import TreePanel from './components/TreePanel';
@@ -10,6 +23,24 @@ const AUTH_TOKEN_KEY = 'pcs_auth_token';
 const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
 const PREVIEWABLE_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+const PREVIEWABLE_DOCUMENT_EXTENSIONS = new Set(['.pdf']);
+const PREVIEWABLE_TEXT_EXTENSIONS = new Set(['.txt', '.md', '.json', '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.yml', '.yaml', '.xml', '.log']);
+const TEXT_PREVIEW_LANGUAGE_BY_EXTENSION = {
+  '.txt': 'plain',
+  '.md': 'markdown',
+  '.json': 'json',
+  '.py': 'python',
+  '.js': 'javascript',
+  '.ts': 'typescript',
+  '.jsx': 'jsx',
+  '.tsx': 'tsx',
+  '.html': 'markup',
+  '.css': 'css',
+  '.yml': 'yaml',
+  '.yaml': 'yaml',
+  '.xml': 'xml-doc',
+  '.log': 'plain',
+};
 
 function normalizeKey(value) {
   return String(value || '').trim().replace(/^\/+/, '');
@@ -85,11 +116,15 @@ function normalizeExtension(value) {
 
 function getPreviewAvailability(item) {
   const extension = normalizeExtension(item?.file_extension);
-  if (!PREVIEWABLE_IMAGE_EXTENSIONS.has(extension)) {
+  const isPreviewableImage = PREVIEWABLE_IMAGE_EXTENSIONS.has(extension);
+  const isPreviewableDocument = PREVIEWABLE_DOCUMENT_EXTENSIONS.has(extension);
+  const isPreviewableText = PREVIEWABLE_TEXT_EXTENSIONS.has(extension);
+
+  if (!isPreviewableImage && !isPreviewableDocument && !isPreviewableText) {
     return {
       canPreview: false,
       tag: 'No preview',
-      reason: 'Preview is only available for jpg, png, webp, and gif files.',
+      reason: 'Preview is only available for jpg, png, webp, gif, pdf, and supported text/code files.',
     };
   }
 
@@ -98,7 +133,7 @@ function getPreviewAvailability(item) {
     return {
       canPreview: false,
       tag: 'Too large',
-      reason: 'Preview is only available for image files up to 20 MB.',
+      reason: 'Preview is only available for supported files up to 20 MB.',
     };
   }
 
@@ -107,6 +142,36 @@ function getPreviewAvailability(item) {
     tag: '',
     reason: '',
   };
+}
+
+function isPdfPreview(item) {
+  return PREVIEWABLE_DOCUMENT_EXTENSIONS.has(normalizeExtension(item?.file_extension));
+}
+
+function isTextPreview(item) {
+  return PREVIEWABLE_TEXT_EXTENSIONS.has(normalizeExtension(item?.file_extension));
+}
+
+function getPreviewLanguage(item) {
+  return TEXT_PREVIEW_LANGUAGE_BY_EXTENSION[normalizeExtension(item?.file_extension)] || 'plain';
+}
+
+function buildHighlightedPreviewLines(content, language) {
+  const normalizedContent = String(content || '').replace(/\r\n/g, '\n');
+  if (!normalizedContent) {
+    return [''];
+  }
+
+  if (language === 'plain') {
+    return normalizedContent.split('\n');
+  }
+
+  const grammar = Prism.languages[language];
+  if (!grammar) {
+    return normalizedContent.split('\n');
+  }
+
+  return Prism.highlight(normalizedContent, grammar, language).split('\n');
 }
 
 function formatBytes(value) {
@@ -310,6 +375,7 @@ export default function App() {
   const [uploadEntries, setUploadEntries] = useState([]);
   const [previewItem, setPreviewItem] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
+  const [previewTextContent, setPreviewTextContent] = useState('');
   const [previewLoadingId, setPreviewLoadingId] = useState('');
   const [folderName, setFolderName] = useState('');
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -382,6 +448,11 @@ export default function App() {
   const selectedTrashCount = Object.values(selectedTrashIds).filter(Boolean).length;
   const visibleFileItems = useMemo(() => visibleItems.filter((item) => item.kind === 'file'), [visibleItems]);
   const selectedDeleteCount = Object.values(selectedDeleteIds).filter(Boolean).length;
+  const previewLanguage = useMemo(() => getPreviewLanguage(previewItem), [previewItem]);
+  const previewLines = useMemo(
+    () => buildHighlightedPreviewLines(previewTextContent, previewLanguage),
+    [previewLanguage, previewTextContent],
+  );
 
   function addUploadEntry(entry) {
     setUploadEntries((current) => [entry, ...current].slice(0, 6));
@@ -420,6 +491,7 @@ export default function App() {
     setUploadEntries([]);
     setPreviewItem(null);
     setPreviewUrl('');
+    setPreviewTextContent('');
     setPreviewLoadingId('');
     setFolderName('');
     setCreatingFolder(false);
@@ -984,6 +1056,12 @@ export default function App() {
       if (!data?.url) {
         throw new Error('Preview URL not found');
       }
+      if (isTextPreview(file)) {
+        const previewTextData = await api(`/files/${encodeURIComponent(fileId)}/preview-text`, { authToken });
+        setPreviewTextContent(String(previewTextData?.content || ''));
+      } else {
+        setPreviewTextContent('');
+      }
       setPreviewItem(file);
       setPreviewUrl(data.url);
     } catch (err) {
@@ -996,6 +1074,7 @@ export default function App() {
   function closePreview() {
     setPreviewItem(null);
     setPreviewUrl('');
+    setPreviewTextContent('');
   }
 
   async function handleCreateFolder(event) {
@@ -1677,7 +1756,33 @@ export default function App() {
               <button className="ghost-button" onClick={closePreview} type="button">Close</button>
             </div>
             <div className="preview-body">
-              <img className="preview-image" src={previewUrl} alt={previewItem.name || 'Preview'} />
+              {isPdfPreview(previewItem) ? (
+                <iframe
+                  className="preview-document"
+                  src={previewUrl}
+                  title={previewItem.name || 'PDF preview'}
+                />
+              ) : isTextPreview(previewItem) ? (
+                <div className="preview-code">
+                  <div className="preview-code-lines">
+                    {previewLines.map((line, index) => (
+                      <div className="preview-code-line" key={`${previewItem.file_id}-${index + 1}`}>
+                        <div className="preview-code-line-number">{index + 1}</div>
+                        {previewLanguage === 'plain' ? (
+                          <code className="preview-code-line-content">{line || ' '}</code>
+                        ) : (
+                          <code
+                            className={`preview-code-line-content language-${previewLanguage}`}
+                            dangerouslySetInnerHTML={{ __html: line || ' ' }}
+                          />
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <img className="preview-image" src={previewUrl} alt={previewItem.name || 'Preview'} />
+              )}
             </div>
           </section>
         </div>
