@@ -2345,6 +2345,7 @@ class ObjectStorageService:
         uploaded_files: int = 0,
         uploaded_bytes: int = 0,
     ):
+        self.resource_guard.tables(self.folder_upload_log_table)
         metadata = self.get_folder_upload_log_or_none(log_id)
         if not metadata or metadata.get("user_id") != self.user_id:
             raise HTTPException(status_code=404, detail="Folder upload log not found")
@@ -2360,9 +2361,16 @@ class ObjectStorageService:
         return {"updated": log_id}
 
     def finalize_folder_upload(self, log_id: str):
+        self.resource_guard.tables(self.folder_upload_log_table, self.folder_table, self.file_table)
         metadata = self.get_folder_upload_log_or_none(log_id)
         if not metadata or metadata.get("user_id") != self.user_id:
             raise HTTPException(status_code=404, detail="Folder upload log not found")
+        if str(metadata.get("status") or "").strip() == self.LOG_STATUS_DONE:
+            return {
+                "log_id": log_id,
+                "root_folder_id": self.normalize_id(metadata.get("root_folder_id")),
+                "status": self.LOG_STATUS_DONE,
+            }
 
         operation_id = self.normalize_id(metadata.get("operation_id"))
         root_folder_id = self.normalize_id(metadata.get("root_folder_id"))
@@ -2423,9 +2431,25 @@ class ObjectStorageService:
             ) from exc
 
     def fail_folder_upload(self, *, log_id: str, last_error: str = "", current_path: str = ""):
+        self.resource_guard.tables(self.folder_upload_log_table, self.folder_table, self.file_table)
+        self.resource_guard.s3_bucket(self.bucket)
         metadata = self.get_folder_upload_log_or_none(log_id)
         if not metadata or metadata.get("user_id") != self.user_id:
             raise HTTPException(status_code=404, detail="Folder upload log not found")
+        current_status = str(metadata.get("status") or "").strip()
+        current_phase = str(metadata.get("phase") or "").strip()
+        if current_status in {self.LOG_STATUS_DONE, self.LOG_STATUS_FAILED, self.LOG_STATUS_REPAIR_REQUIRED}:
+            return {
+                "log_id": log_id,
+                "root_folder_id": self.normalize_id(metadata.get("root_folder_id")),
+                "status": current_status or self.LOG_STATUS_FAILED,
+            }
+        if current_phase in {"finalizing", "repair_required", "done"}:
+            return {
+                "log_id": log_id,
+                "root_folder_id": self.normalize_id(metadata.get("root_folder_id")),
+                "status": current_status or self.LOG_STATUS_RUNNING,
+            }
 
         operation_id = self.normalize_id(metadata.get("operation_id"))
         root_folder_id = self.normalize_id(metadata.get("root_folder_id"))

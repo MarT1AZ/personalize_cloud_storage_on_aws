@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-clike';
 import 'prismjs/components/prism-markup';
@@ -392,6 +392,13 @@ function extractS3UploadError(payload) {
 }
 
 export default function App() {
+  const folderUploadRuntimeRef = useRef({
+    active: false,
+    logId: '',
+    authToken: '',
+    phase: '',
+    currentPath: '',
+  });
   const [authToken, setAuthToken] = useState('');
   const [authUser, setAuthUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
@@ -510,6 +517,24 @@ export default function App() {
 
   function addUploadEntry(entry) {
     setUploadEntries((current) => [entry, ...current].slice(0, 6));
+  }
+
+  function setOngoingFolderUpload(nextValues) {
+    folderUploadRuntimeRef.current = {
+      ...folderUploadRuntimeRef.current,
+      ...nextValues,
+      active: true,
+    };
+  }
+
+  function clearOngoingFolderUpload() {
+    folderUploadRuntimeRef.current = {
+      active: false,
+      logId: '',
+      authToken: '',
+      phase: '',
+      currentPath: '',
+    };
   }
 
   function updateUploadEntry(entryId, nextValues) {
@@ -837,6 +862,39 @@ export default function App() {
   }, [actionMenuKey]);
 
   useEffect(() => {
+    function handlePageHide() {
+      const session = folderUploadRuntimeRef.current;
+      if (!session.active || !session.logId || !session.authToken) {
+        return;
+      }
+      if (session.phase === 'transferred' || session.phase === 'finalizing' || session.phase === 'done') {
+        return;
+      }
+
+      fetch(`${API_BASE}/folder-upload/fail`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.authToken}`,
+        },
+        body: JSON.stringify({
+          log_id: session.logId,
+          last_error: 'Folder upload interrupted by page reload or navigation',
+          current_path: session.currentPath || '',
+        }),
+        keepalive: true,
+      }).catch(() => {
+        // Best effort rollback when the page is leaving.
+      });
+
+      clearOngoingFolderUpload();
+    }
+
+    window.addEventListener('pagehide', handlePageHide);
+    return () => window.removeEventListener('pagehide', handlePageHide);
+  }, []);
+
+  useEffect(() => {
     if (!moveSelectionMode || !moveSourceId || !moveDestinationId) {
       return;
     }
@@ -1020,6 +1078,11 @@ export default function App() {
       setError('');
       setSuccess('');
       setFolderUploading(true);
+      setOngoingFolderUpload({
+        authToken,
+        phase: 'starting',
+        currentPath: selectedFolderUpload.rootName,
+      });
       addUploadEntry({
         id: entryId,
         name: `${selectedFolderUpload.rootName}/`,
@@ -1041,6 +1104,12 @@ export default function App() {
         }),
         authToken,
       });
+      setOngoingFolderUpload({
+        authToken,
+        logId: uploadSession.log_id,
+        phase: 'creating_folder_tree',
+        currentPath: selectedFolderUpload.rootName,
+      });
 
       const folderIdByPath = new Map([[selectedFolderUpload.rootName, uploadSession.root_folder_id]]);
       updateUploadEntry(entryId, { status: 'uploading' });
@@ -1054,6 +1123,12 @@ export default function App() {
         const folderName = lastSlashIndex >= 0 ? folderPath.slice(lastSlashIndex + 1) : folderPath;
         const parentFolderId = folderIdByPath.get(parentPath) || uploadSession.root_folder_id;
         lastCurrentPath = folderPath;
+        setOngoingFolderUpload({
+          authToken,
+          logId: uploadSession.log_id,
+          phase: 'creating_folder_tree',
+          currentPath: folderPath,
+        });
         await api('/folders', {
           method: 'POST',
           body: JSON.stringify({
@@ -1083,6 +1158,12 @@ export default function App() {
         const parentPath = entry.relativeDir || selectedFolderUpload.rootName;
         const parentFolderId = folderIdByPath.get(parentPath) || uploadSession.root_folder_id;
         lastCurrentPath = entry.relativePath;
+        setOngoingFolderUpload({
+          authToken,
+          logId: uploadSession.log_id,
+          phase: 'uploading_files',
+          currentPath: entry.relativePath,
+        });
         const uploadInit = await api('/upload/init', {
           method: 'POST',
           body: JSON.stringify({
@@ -1147,6 +1228,12 @@ export default function App() {
       }
 
       transferCompleted = true;
+      setOngoingFolderUpload({
+        authToken,
+        logId: uploadSession.log_id,
+        phase: 'finalizing',
+        currentPath: lastCurrentPath || selectedFolderUpload.rootName,
+      });
       await api('/folder-upload/finalize', {
         method: 'POST',
         body: JSON.stringify({
@@ -1162,6 +1249,7 @@ export default function App() {
       });
       setSelectedFolderUpload(null);
       form.reset();
+      clearOngoingFolderUpload();
       await loadFiles(currentFolderId, true);
     } catch (err) {
       if (uploadSession?.log_id && !transferCompleted) {
@@ -1185,6 +1273,7 @@ export default function App() {
         errorMessage: err.message || 'Folder upload failed',
       });
       setError(err.message || 'Folder upload failed');
+      clearOngoingFolderUpload();
       await loadFiles(currentFolderId, true, true, true);
     } finally {
       setFolderUploading(false);
