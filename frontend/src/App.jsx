@@ -211,11 +211,18 @@ function formatDateTime(value) {
 
 function buildFolderUploadSelection(fileList) {
   const files = Array.from(fileList || [])
-    .map((file) => {
-      const relativePath = String(file.webkitRelativePath || file.name || '').replace(/^\/+/, '');
+    .map((entry) => {
+      if (entry?.file) {
+        return {
+          file: entry.file,
+          relativePath: String(entry.relativePath || entry.file.webkitRelativePath || entry.file.name || '').replace(/^\/+/, ''),
+        };
+      }
+
+      const file = entry;
       return {
         file,
-        relativePath,
+        relativePath: String(file?.webkitRelativePath || file?.name || '').replace(/^\/+/, ''),
       };
     })
     .filter((entry) => entry.relativePath);
@@ -257,6 +264,63 @@ function buildFolderUploadSelection(fileList) {
       return left.localeCompare(right, undefined, { sensitivity: 'base' });
     }),
   };
+}
+
+function readDroppedDirectoryEntries(reader) {
+  return new Promise((resolve, reject) => {
+    const collectedEntries = [];
+
+    function readNextBatch() {
+      reader.readEntries(
+        (entries) => {
+          if (!entries.length) {
+            resolve(collectedEntries);
+            return;
+          }
+
+          collectedEntries.push(...entries);
+          readNextBatch();
+        },
+        reject,
+      );
+    }
+
+    readNextBatch();
+  });
+}
+
+function getDroppedFile(entry) {
+  return new Promise((resolve, reject) => {
+    entry.file(resolve, reject);
+  });
+}
+
+async function collectDroppedEntryFiles(entry, basePath = '') {
+  if (!entry) {
+    return [];
+  }
+
+  if (entry.isFile) {
+    const file = await getDroppedFile(entry);
+    return [{
+      file,
+      relativePath: `${basePath}${entry.name}`,
+    }];
+  }
+
+  if (!entry.isDirectory) {
+    return [];
+  }
+
+  const nextBasePath = `${basePath}${entry.name}/`;
+  const children = await readDroppedDirectoryEntries(entry.createReader());
+  const collected = [];
+
+  for (const childEntry of children) {
+    collected.push(...await collectDroppedEntryFiles(childEntry, nextBasePath));
+  }
+
+  return collected;
 }
 
 function sortItems(items, sortMode) {
@@ -399,6 +463,7 @@ export default function App() {
     phase: '',
     currentPath: '',
   });
+  const dragDropDepthRef = useRef(0);
   const [authToken, setAuthToken] = useState('');
   const [authUser, setAuthUser] = useState(null);
   const [authChecking, setAuthChecking] = useState(true);
@@ -430,6 +495,7 @@ export default function App() {
   const [success, setSuccess] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedFolderUpload, setSelectedFolderUpload] = useState(null);
+  const [dragDropActive, setDragDropActive] = useState(false);
   const [replaceExistingUpload, setReplaceExistingUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [folderUploading, setFolderUploading] = useState(false);
@@ -567,6 +633,8 @@ export default function App() {
     setSuccess('');
     setSelectedFile(null);
     setSelectedFolderUpload(null);
+    setDragDropActive(false);
+    dragDropDepthRef.current = 0;
     setReplaceExistingUpload(false);
     setUploading(false);
     setFolderUploading(false);
@@ -942,15 +1010,13 @@ export default function App() {
     }
   }
 
-  async function handleUpload(event) {
-    event.preventDefault();
-    if (!selectedFile) return;
-    const form = event.currentTarget;
+  async function runSingleFileUpload(file, { replaceExisting = replaceExistingUpload } = {}) {
+    if (!file) return false;
     const entryId = `upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-    if (selectedFile.size > MAX_UPLOAD_BYTES) {
+    if (file.size > MAX_UPLOAD_BYTES) {
       setError('File is larger than 1GB.');
-      return;
+      return false;
     }
 
     try {
@@ -959,22 +1025,22 @@ export default function App() {
       setUploading(true);
       addUploadEntry({
         id: entryId,
-        name: selectedFile.name,
-        size: selectedFile.size,
+        name: file.name,
+        size: file.size,
         progress: 0,
         status: 'preparing',
         targetPath: currentPath || '/',
-        mode: replaceExistingUpload ? 'replace' : 'upload',
+        mode: replaceExisting ? 'replace' : 'upload',
         errorMessage: '',
       });
       const uploadInit = await api('/upload/init', {
         method: 'POST',
         body: JSON.stringify({
-          file_name: selectedFile.name,
-          file_size: selectedFile.size,
-          file_type: selectedFile.type || '',
+          file_name: file.name,
+          file_size: file.size,
+          file_type: file.type || '',
           folder_id: currentFolderId,
-          replace_existing: replaceExistingUpload,
+          replace_existing: replaceExisting,
         }),
         authToken,
       });
@@ -985,10 +1051,10 @@ export default function App() {
       await uploadToPresignedPost(
         uploadInit?.upload_url || '',
         uploadInit?.upload_fields || {},
-        selectedFile,
+        file,
         {
           onProgress: (loaded, total) => {
-            const safeTotal = total > 0 ? total : selectedFile.size;
+            const safeTotal = total > 0 ? total : file.size;
             const progress = safeTotal > 0 ? Math.min(Math.round((loaded / safeTotal) * 100), 100) : 0;
             updateUploadEntry(entryId, {
               progress,
@@ -1010,20 +1076,32 @@ export default function App() {
         status: 'success',
         errorMessage: '',
       });
-
-      setSelectedFile(null);
-      setReplaceExistingUpload(false);
-      form.reset();
       await loadFiles(currentFolderId, true);
+      return true;
     } catch (err) {
       updateUploadEntry(entryId, {
         status: 'failed',
         errorMessage: err.message || 'Upload failed',
       });
       setError(err.message || 'Upload failed');
+      return false;
     } finally {
       setUploading(false);
     }
+  }
+
+  async function handleUpload(event) {
+    event.preventDefault();
+    if (!selectedFile) return;
+    const form = event.currentTarget;
+    const succeeded = await runSingleFileUpload(selectedFile, { replaceExisting: replaceExistingUpload });
+    if (!succeeded) {
+      return;
+    }
+
+    setSelectedFile(null);
+    setReplaceExistingUpload(false);
+    form.reset();
   }
 
   function handleSelectedFileChange(event) {
@@ -1062,11 +1140,101 @@ export default function App() {
     setSelectedFolderUpload(summary);
   }
 
-  async function handleFolderUpload(event) {
+  function handleUploadDragEnter(event) {
+    if (viewMode !== 'files' || contentView !== 'objects') {
+      return;
+    }
     event.preventDefault();
-    if (!selectedFolderUpload) return;
+    dragDropDepthRef.current += 1;
+    setDragDropActive(true);
+  }
 
-    const form = event.currentTarget;
+  function handleUploadDragOver(event) {
+    if (viewMode !== 'files' || contentView !== 'objects') {
+      return;
+    }
+    event.preventDefault();
+    if (event.dataTransfer) {
+      event.dataTransfer.dropEffect = 'copy';
+    }
+    setDragDropActive(true);
+  }
+
+  function handleUploadDragLeave(event) {
+    if (viewMode !== 'files' || contentView !== 'objects') {
+      return;
+    }
+    event.preventDefault();
+    dragDropDepthRef.current = Math.max(dragDropDepthRef.current - 1, 0);
+    if (dragDropDepthRef.current === 0) {
+      setDragDropActive(false);
+    }
+  }
+
+  async function handleUploadDrop(event) {
+    if (viewMode !== 'files' || contentView !== 'objects') {
+      return;
+    }
+    event.preventDefault();
+    dragDropDepthRef.current = 0;
+    setDragDropActive(false);
+
+    if (uploading || folderUploading) {
+      setError('Wait for the current upload to finish first.');
+      return;
+    }
+
+    try {
+      setError('');
+      setSuccess('');
+      const transferItems = Array.from(event.dataTransfer?.items || []);
+      const transferFiles = Array.from(event.dataTransfer?.files || []);
+      const droppedEntries = transferItems
+        .map((item) => (typeof item.webkitGetAsEntry === 'function' ? item.webkitGetAsEntry() : null))
+        .filter(Boolean);
+      const droppedDirectories = droppedEntries.filter((entry) => entry.isDirectory);
+      const droppedFiles = droppedEntries.filter((entry) => entry.isFile);
+
+      if (droppedDirectories.length > 0) {
+        if (droppedDirectories.length > 1 || droppedFiles.length > 0) {
+          throw new Error('Drop one folder at a time. Mixed file and folder drops are not supported yet.');
+        }
+
+        const droppedFolderFiles = await collectDroppedEntryFiles(droppedDirectories[0]);
+        const summary = buildFolderUploadSelection(droppedFolderFiles);
+        if (!summary) {
+          throw new Error('Could not read the dropped folder.');
+        }
+        if (summary.totalBytes > MAX_FOLDER_UPLOAD_BYTES) {
+          throw new Error('Selected folder is larger than 2GB.');
+        }
+
+        setSelectedFolderUpload(summary);
+        const succeeded = await runFolderUpload(summary);
+        if (succeeded) {
+          setSelectedFolderUpload(null);
+        }
+        return;
+      }
+
+      const filesToUpload = transferFiles.filter((file) => Number(file?.size || 0) > 0);
+      if (!filesToUpload.length) {
+        throw new Error('Drop a file or folder to upload.');
+      }
+
+      for (const file of filesToUpload) {
+        const succeeded = await runSingleFileUpload(file, { replaceExisting: replaceExistingUpload });
+        if (!succeeded) {
+          break;
+        }
+      }
+    } catch (err) {
+      setError(err.message || 'Drag and drop upload failed');
+    }
+  }
+
+  async function runFolderUpload(summary) {
+    if (!summary) return false;
     const entryId = `folder-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     let uploadSession = null;
     let lastCurrentPath = '';
@@ -1081,12 +1249,12 @@ export default function App() {
       setOngoingFolderUpload({
         authToken,
         phase: 'starting',
-        currentPath: selectedFolderUpload.rootName,
+        currentPath: summary.rootName,
       });
       addUploadEntry({
         id: entryId,
-        name: `${selectedFolderUpload.rootName}/`,
-        size: selectedFolderUpload.totalBytes,
+        name: `${summary.rootName}/`,
+        size: summary.totalBytes,
         progress: 0,
         status: 'preparing',
         targetPath: currentPath || '/',
@@ -1097,10 +1265,10 @@ export default function App() {
       uploadSession = await api('/folder-upload/start', {
         method: 'POST',
         body: JSON.stringify({
-          root_folder_name: selectedFolderUpload.rootName,
+          root_folder_name: summary.rootName,
           parent_id: currentFolderId,
-          total_files: selectedFolderUpload.totalFiles,
-          total_bytes: selectedFolderUpload.totalBytes,
+          total_files: summary.totalFiles,
+          total_bytes: summary.totalBytes,
         }),
         authToken,
       });
@@ -1108,18 +1276,18 @@ export default function App() {
         authToken,
         logId: uploadSession.log_id,
         phase: 'creating_folder_tree',
-        currentPath: selectedFolderUpload.rootName,
+        currentPath: summary.rootName,
       });
 
-      const folderIdByPath = new Map([[selectedFolderUpload.rootName, uploadSession.root_folder_id]]);
+      const folderIdByPath = new Map([[summary.rootName, uploadSession.root_folder_id]]);
       updateUploadEntry(entryId, { status: 'uploading' });
 
-      for (const folderPath of selectedFolderUpload.folderPaths) {
-        if (folderPath === selectedFolderUpload.rootName) {
+      for (const folderPath of summary.folderPaths) {
+        if (folderPath === summary.rootName) {
           continue;
         }
         const lastSlashIndex = folderPath.lastIndexOf('/');
-        const parentPath = lastSlashIndex > 0 ? folderPath.slice(0, lastSlashIndex) : selectedFolderUpload.rootName;
+        const parentPath = lastSlashIndex > 0 ? folderPath.slice(0, lastSlashIndex) : summary.rootName;
         const folderName = lastSlashIndex >= 0 ? folderPath.slice(lastSlashIndex + 1) : folderPath;
         const parentFolderId = folderIdByPath.get(parentPath) || uploadSession.root_folder_id;
         lastCurrentPath = folderPath;
@@ -1154,8 +1322,8 @@ export default function App() {
         });
       }
 
-      for (const entry of selectedFolderUpload.files) {
-        const parentPath = entry.relativeDir || selectedFolderUpload.rootName;
+      for (const entry of summary.files) {
+        const parentPath = entry.relativeDir || summary.rootName;
         const parentFolderId = folderIdByPath.get(parentPath) || uploadSession.root_folder_id;
         lastCurrentPath = entry.relativePath;
         setOngoingFolderUpload({
@@ -1186,8 +1354,8 @@ export default function App() {
             onProgress: (loaded) => {
               const safeLoaded = Math.min(Number(loaded || 0), entry.size);
               const totalLoaded = uploadedBytes + safeLoaded;
-              const progress = selectedFolderUpload.totalBytes > 0
-                ? Math.min(Math.round((totalLoaded / selectedFolderUpload.totalBytes) * 100), 100)
+              const progress = summary.totalBytes > 0
+                ? Math.min(Math.round((totalLoaded / summary.totalBytes) * 100), 100)
                 : 0;
               updateUploadEntry(entryId, {
                 progress,
@@ -1208,8 +1376,8 @@ export default function App() {
         uploadedFiles += 1;
         uploadedBytes += entry.size;
         updateUploadEntry(entryId, {
-          progress: selectedFolderUpload.totalBytes > 0
-            ? Math.min(Math.round((uploadedBytes / selectedFolderUpload.totalBytes) * 100), 100)
+          progress: summary.totalBytes > 0
+            ? Math.min(Math.round((uploadedBytes / summary.totalBytes) * 100), 100)
             : 100,
           status: 'uploading',
         });
@@ -1232,7 +1400,7 @@ export default function App() {
         authToken,
         logId: uploadSession.log_id,
         phase: 'finalizing',
-        currentPath: lastCurrentPath || selectedFolderUpload.rootName,
+        currentPath: lastCurrentPath || summary.rootName,
       });
       await api('/folder-upload/finalize', {
         method: 'POST',
@@ -1247,10 +1415,9 @@ export default function App() {
         status: 'success',
         errorMessage: '',
       });
-      setSelectedFolderUpload(null);
-      form.reset();
       clearOngoingFolderUpload();
       await loadFiles(currentFolderId, true);
+      return true;
     } catch (err) {
       if (uploadSession?.log_id && !transferCompleted) {
         try {
@@ -1275,9 +1442,24 @@ export default function App() {
       setError(err.message || 'Folder upload failed');
       clearOngoingFolderUpload();
       await loadFiles(currentFolderId, true, true, true);
+      return false;
     } finally {
       setFolderUploading(false);
     }
+  }
+
+  async function handleFolderUpload(event) {
+    event.preventDefault();
+    if (!selectedFolderUpload) return;
+
+    const form = event.currentTarget;
+    const succeeded = await runFolderUpload(selectedFolderUpload);
+    if (!succeeded) {
+      return;
+    }
+
+    setSelectedFolderUpload(null);
+    form.reset();
   }
 
   async function handleDelete(rawObjectId) {
@@ -2007,7 +2189,12 @@ export default function App() {
               buildRenamedObjectName={buildRenamedObjectName}
               getPreviewAvailability={getPreviewAvailability}
               previewLoadingId={previewLoadingId}
+              dragDropActive={dragDropActive}
               getMoveDestinationBlockReason={getMoveDestinationBlockReason}
+              onDragEnter={handleUploadDragEnter}
+              onDragOver={handleUploadDragOver}
+              onDragLeave={handleUploadDragLeave}
+              onDrop={handleUploadDrop}
               onOpenFolder={handleOpenFolder}
               onOpenParent={handleOpenParent}
               onSearchChange={(event) => setSearchQuery(event.target.value)}

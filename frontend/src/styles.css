@@ -524,6 +524,11 @@ h1 {
   margin-bottom: 0;
 }
 
+.panel-drop-active {
+  border-color: rgba(167, 188, 255, 0.55);
+  box-shadow: 0 0 0 1px rgba(116, 152, 255, 0.24);
+}
+
 .control-field {
   min-width: 0;
 }
@@ -533,6 +538,22 @@ h1 {
   gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 14px;
+}
+
+.dropzone-hint {
+  margin-bottom: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border: 1px dashed rgba(90, 116, 160, 0.46);
+  background: rgba(15, 24, 37, 0.72);
+  color: #9bb0c7;
+  font-size: 0.9rem;
+}
+
+.dropzone-hint-active {
+  border-color: rgba(167, 188, 255, 0.6);
+  background: linear-gradient(135deg, rgba(61, 102, 214, 0.16) 0%, rgba(193, 61, 93, 0.08) 100%);
+  color: #e8eef6;
 }
 
 .breadcrumb-link,

@@ -335,7 +335,12 @@ export default function ObjectBrowserPanel(props) {
     buildRenamedObjectName,
     getPreviewAvailability,
     previewLoadingId,
+    dragDropActive,
     getMoveDestinationBlockReason,
+    onDragEnter,
+    onDragOver,
+    onDragLeave,
+    onDrop,
     onOpenFolder,
     onOpenParent,
     onSearchChange,
@@ -365,7 +370,13 @@ export default function ObjectBrowserPanel(props) {
   } = props;
 
   return (
-    <section className="panel panel-main">
+    <section
+      className={`panel panel-main${dragDropActive ? ' panel-drop-active' : ''}`}
+      onDragEnter={onDragEnter}
+      onDragOver={onDragOver}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
       <div className="section-head">
         <h2>{viewMode === 'trash' ? 'Trash' : 'Objects'}</h2>
         <span className="count">
@@ -376,19 +387,26 @@ export default function ObjectBrowserPanel(props) {
       {viewMode === 'trash' ? (
         <div className="helper-text">Trashed files stay here until you restore them or delete them forever.</div>
       ) : (
-        <div className="breadcrumbs" aria-label="Folder path">
-          {breadcrumbItems.map((item) => (
-            <button
-              key={item.folder_id || 'root'}
-              className={item.folder_id === currentFolderId ? 'breadcrumb-current' : 'breadcrumb-link'}
-              disabled={item.folder_id === currentFolderId}
-              onClick={() => onOpenFolder(item.folder_id)}
-              type="button"
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        <>
+          <div className="breadcrumbs" aria-label="Folder path">
+            {breadcrumbItems.map((item) => (
+              <button
+                key={item.folder_id || 'root'}
+                className={item.folder_id === currentFolderId ? 'breadcrumb-current' : 'breadcrumb-link'}
+                disabled={item.folder_id === currentFolderId}
+                onClick={() => onOpenFolder(item.folder_id)}
+                type="button"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+          <div className={`dropzone-hint${dragDropActive ? ' dropzone-hint-active' : ''}`}>
+            {dragDropActive
+              ? 'Drop files or one folder here to upload.'
+              : 'Drag files or one folder here to upload.'}
+          </div>
+        </>
       )}
 
       <div className="list-controls">
