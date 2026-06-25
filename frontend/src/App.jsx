@@ -13,10 +13,8 @@ import 'prismjs/components/prism-markdown';
 import 'prismjs/components/prism-yaml';
 import 'prismjs/components/prism-xml-doc';
 import LoginScreen from './components/LoginScreen';
-import ObjectBrowserPanel from './components/ObjectBrowserPanel';
-import TreePanel from './components/TreePanel';
-import WorkspaceHeader from './components/WorkspaceHeader';
-import WorkspaceSidebar from './components/WorkspaceSidebar';
+import PreviewModal from './components/PreviewModal';
+import WorkspaceShell from './components/WorkspaceShell';
 
 const API_BASE = '/api';
 const AUTH_TOKEN_KEY = 'pcs_auth_token';
@@ -704,13 +702,14 @@ export default function App() {
     try {
       setError('');
       setSuccess('');
-      if (isManualRefresh && !preserveRecentRenames) {
-        setRecentRenames({});
-      }
-      if (isManualRefresh && !preserveRecentDeletes) {
-        setRecentDeletes([]);
-      }
       if (isManualRefresh) {
+        if (!preserveRecentRenames) {
+          setRecentRenames({});
+        }
+        if (!preserveRecentDeletes) {
+          setRecentDeletes([]);
+        }
+        setUploadEntries([]);
         setRefreshing(true);
       } else {
         setLoading(true);
@@ -752,6 +751,7 @@ export default function App() {
       setError('');
       setSuccess('');
       if (isManualRefresh) {
+        setUploadEntries([]);
         setRefreshing(true);
       } else {
         setLoading(true);
@@ -2109,232 +2109,196 @@ export default function App() {
     );
   }
 
+  const headerProps = {
+    authUser,
+    viewMode,
+    contentView,
+    deleteMode,
+    moveSelectionMode,
+    purgeMode,
+    refreshing,
+    loading,
+    onSwitchContentView: switchContentView,
+    onToggleDeleteMode: toggleDeleteMode,
+    onToggleMoveSelectionMode: toggleMoveSelectionMode,
+    onTogglePurgeMode: togglePurgeMode,
+    onToggleTrashView: toggleTrashView,
+    onRefresh: refreshCurrentView,
+    onLogout: handleLogout,
+  };
+
+  const treePanelProps = {
+    tree: treeData,
+    loading: treeLoading,
+    error: treeError,
+    currentFolderId,
+    scope: treeScope,
+    visibility: treeVisibility,
+    onScopeChange: setTreeScope,
+    onVisibilityChange: setTreeVisibility,
+    onOpenFolder: handleOpenFolder,
+  };
+
+  const objectBrowserProps = {
+    viewMode,
+    visibleItems,
+    totalItemCount,
+    breadcrumbItems,
+    currentFolderId,
+    currentFolderState,
+    searchQuery,
+    sortMode,
+    groupMode,
+    loading,
+    error,
+    success,
+    recentDeletes,
+    deleteMode,
+    visibleFileItems,
+    selectedDeleteCount,
+    trashAction,
+    purgeMode,
+    purgeFolderLabel,
+    moveSelectionMode,
+    moveSourceLabel,
+    moveDestinationLabel,
+    selectedTrashCount,
+    selectedTrashIds,
+    selectedDeleteIds,
+    deleteConfirmKey,
+    deleting,
+    purgeFolderId: normalizeId(purgeFolderId),
+    moveSourceId: normalizeId(moveSourceId),
+    moveDestinationId: normalizeId(moveDestinationId),
+    recentRenames,
+    renameDrafts,
+    actionMenuKey,
+    editingKey,
+    renameNotices,
+    renaming,
+    downloading,
+    displayPath,
+    formatDateTime,
+    formatBytes,
+    buildRenamedObjectName,
+    getPreviewAvailability,
+    previewLoadingId,
+    dragDropActive,
+    getMoveDestinationBlockReason,
+    onDragEnter: handleUploadDragEnter,
+    onDragOver: handleUploadDragOver,
+    onDragLeave: handleUploadDragLeave,
+    onDrop: handleUploadDrop,
+    onOpenFolder: handleOpenFolder,
+    onOpenParent: handleOpenParent,
+    onSearchChange: (event) => setSearchQuery(event.target.value),
+    onSortChange: (event) => setSortMode(event.target.value),
+    onGroupChange: (event) => setGroupMode(event.target.value),
+    onToggleSelectAllFilesForDelete: toggleSelectAllFilesForDelete,
+    onSoftDeleteSelected: handleSoftDeleteSelected,
+    onToggleSelectAllTrash: toggleSelectAllTrash,
+    onRestoreTrash: handleRestoreTrash,
+    onDeleteTrash: handleDeleteTrash,
+    onToggleTrashSelection: toggleTrashSelection,
+    onSelectOnlyTrash: selectOnlyTrashItem,
+    onToggleDeleteSelection: toggleDeleteSelection,
+    onDelete: handleDelete,
+    onAskDelete: setDeleteConfirmKey,
+    onCancelDelete: () => setDeleteConfirmKey(''),
+    onTogglePurgeFolder: togglePurgeFolderSelection,
+    onToggleMoveSource: toggleMoveSourceSelection,
+    onToggleMoveDestination: toggleMoveDestinationSelection,
+    onToggleActionMenu: toggleActionMenu,
+    onStartRename: startRename,
+    onRenameDraftChange: updateRenameDraft,
+    onRename: handleRename,
+    onCancelRename: cancelRename,
+    onDownload: handleDownload,
+    onPreview: handlePreview,
+  };
+
+  const sidebarProps = {
+    viewMode,
+    currentPath,
+    folderForm: {
+      value: folderName,
+      submitting: creatingFolder,
+      onChange: (event) => setFolderName(event.target.value),
+      onSubmit: handleCreateFolder,
+    },
+    uploadForm: {
+      selectedFile,
+      replaceExisting: replaceExistingUpload,
+      submitting: uploading || folderUploading,
+      uploadEntries,
+      formatBytes,
+      onFileChange: handleSelectedFileChange,
+      onReplaceExistingChange: (event) => setReplaceExistingUpload(event.target.checked),
+      onSubmit: handleUpload,
+    },
+    folderUploadForm: {
+      summary: selectedFolderUpload,
+      submitting: folderUploading || uploading,
+      formatBytes,
+      onFolderChange: handleSelectedFolderChange,
+      onSubmit: handleFolderUpload,
+    },
+    purgeControls: {
+      folderId: purgeFolderId,
+      folderLabel: purgeFolderLabel,
+      state: purgeState,
+      running: purging,
+      onStart: () => handlePurge(),
+      onResume: () => handlePurge({ resume: true }),
+    },
+    moveControls: {
+      sourceId: moveSourceId,
+      sourceLabel: moveSourceLabel,
+      sourceKind: moveSourceKind,
+      destinationId: moveDestinationId,
+      destinationLabel: moveDestinationLabel,
+      state: moveState,
+      running: moveRunning,
+      onUseCurrentFolderAsDestination: useCurrentFolderAsMoveDestination,
+      onStartMerge: () => handleMoveOperation('merge'),
+      onStartAvoidConflict: () => handleMoveOperation('avoid_conflict'),
+      onResume: () => handleMoveOperation(moveState.mode || 'merge', { resume: true }),
+    },
+    trashControls: {
+      selectedCount: selectedTrashCount,
+      action: trashAction,
+      onRestore: handleRestoreTrash,
+      onDelete: handleDeleteTrash,
+    },
+    helpers: {
+      buildFolderPreview,
+      normalizeKey,
+      normalizeId,
+      getCurrentFolderMoveBlockReason,
+    },
+  };
+
   return (
-    <main className="app-shell">
-      <WorkspaceHeader
-        authUser={authUser}
-        viewMode={viewMode}
-        contentView={contentView}
-        deleteMode={deleteMode}
-        moveSelectionMode={moveSelectionMode}
-        purgeMode={purgeMode}
-        refreshing={refreshing}
-        loading={loading}
-        onSwitchContentView={switchContentView}
-        onToggleDeleteMode={toggleDeleteMode}
-        onToggleMoveSelectionMode={toggleMoveSelectionMode}
-        onTogglePurgeMode={togglePurgeMode}
-        onToggleTrashView={toggleTrashView}
-        onRefresh={refreshCurrentView}
-        onLogout={handleLogout}
+    <>
+      <WorkspaceShell
+        headerProps={headerProps}
+        showTreePanel={viewMode === 'files' && contentView === 'tree'}
+        treePanelProps={treePanelProps}
+        showObjectBrowser={viewMode === 'trash' || contentView === 'objects'}
+        objectBrowserProps={objectBrowserProps}
+        sidebarProps={sidebarProps}
       />
-
-      <section className="workspace-grid">
-        <div className="main-column">
-          {viewMode === 'files' && contentView === 'tree' ? (
-            <TreePanel
-              tree={treeData}
-              loading={treeLoading}
-              error={treeError}
-              currentFolderId={currentFolderId}
-              scope={treeScope}
-              visibility={treeVisibility}
-              onScopeChange={setTreeScope}
-              onVisibilityChange={setTreeVisibility}
-              onOpenFolder={handleOpenFolder}
-            />
-          ) : null}
-          {viewMode === 'trash' || contentView === 'objects' ? (
-            <ObjectBrowserPanel
-              viewMode={viewMode}
-              visibleItems={visibleItems}
-              totalItemCount={totalItemCount}
-              breadcrumbItems={breadcrumbItems}
-              currentFolderId={currentFolderId}
-              currentFolderState={currentFolderState}
-              searchQuery={searchQuery}
-              sortMode={sortMode}
-              groupMode={groupMode}
-              loading={loading}
-              error={error}
-              success={success}
-              recentDeletes={recentDeletes}
-              deleteMode={deleteMode}
-              visibleFileItems={visibleFileItems}
-              selectedDeleteCount={selectedDeleteCount}
-              trashAction={trashAction}
-              purgeMode={purgeMode}
-              purgeFolderLabel={purgeFolderLabel}
-              moveSelectionMode={moveSelectionMode}
-              moveSourceLabel={moveSourceLabel}
-              moveDestinationLabel={moveDestinationLabel}
-              selectedTrashCount={selectedTrashCount}
-              selectedTrashIds={selectedTrashIds}
-              selectedDeleteIds={selectedDeleteIds}
-              deleteConfirmKey={deleteConfirmKey}
-              deleting={deleting}
-              purgeFolderId={normalizeId(purgeFolderId)}
-              moveSourceId={normalizeId(moveSourceId)}
-              moveDestinationId={normalizeId(moveDestinationId)}
-              recentRenames={recentRenames}
-              renameDrafts={renameDrafts}
-              actionMenuKey={actionMenuKey}
-              editingKey={editingKey}
-              renameNotices={renameNotices}
-              renaming={renaming}
-              downloading={downloading}
-              displayPath={displayPath}
-              formatDateTime={formatDateTime}
-              formatBytes={formatBytes}
-              buildRenamedObjectName={buildRenamedObjectName}
-              getPreviewAvailability={getPreviewAvailability}
-              previewLoadingId={previewLoadingId}
-              dragDropActive={dragDropActive}
-              getMoveDestinationBlockReason={getMoveDestinationBlockReason}
-              onDragEnter={handleUploadDragEnter}
-              onDragOver={handleUploadDragOver}
-              onDragLeave={handleUploadDragLeave}
-              onDrop={handleUploadDrop}
-              onOpenFolder={handleOpenFolder}
-              onOpenParent={handleOpenParent}
-              onSearchChange={(event) => setSearchQuery(event.target.value)}
-              onSortChange={(event) => setSortMode(event.target.value)}
-              onGroupChange={(event) => setGroupMode(event.target.value)}
-              onToggleSelectAllFilesForDelete={toggleSelectAllFilesForDelete}
-              onSoftDeleteSelected={handleSoftDeleteSelected}
-              onToggleSelectAllTrash={toggleSelectAllTrash}
-              onRestoreTrash={handleRestoreTrash}
-              onDeleteTrash={handleDeleteTrash}
-              onToggleTrashSelection={toggleTrashSelection}
-              onSelectOnlyTrash={selectOnlyTrashItem}
-              onToggleDeleteSelection={toggleDeleteSelection}
-              onDelete={handleDelete}
-              onAskDelete={setDeleteConfirmKey}
-              onCancelDelete={() => setDeleteConfirmKey('')}
-              onTogglePurgeFolder={togglePurgeFolderSelection}
-              onToggleMoveSource={toggleMoveSourceSelection}
-              onToggleMoveDestination={toggleMoveDestinationSelection}
-              onToggleActionMenu={toggleActionMenu}
-              onStartRename={startRename}
-              onRenameDraftChange={updateRenameDraft}
-              onRename={handleRename}
-              onCancelRename={cancelRename}
-              onDownload={handleDownload}
-              onPreview={handlePreview}
-            />
-          ) : null}
-        </div>
-
-        <WorkspaceSidebar
-          viewMode={viewMode}
-          currentPath={currentPath}
-          folderForm={{
-            value: folderName,
-            submitting: creatingFolder,
-            onChange: (event) => setFolderName(event.target.value),
-            onSubmit: handleCreateFolder,
-          }}
-          uploadForm={{
-            selectedFile,
-            replaceExisting: replaceExistingUpload,
-            submitting: uploading || folderUploading,
-            uploadEntries,
-            formatBytes,
-            onFileChange: handleSelectedFileChange,
-            onReplaceExistingChange: (event) => setReplaceExistingUpload(event.target.checked),
-            onSubmit: handleUpload,
-          }}
-          folderUploadForm={{
-            summary: selectedFolderUpload,
-            submitting: folderUploading || uploading,
-            formatBytes,
-            onFolderChange: handleSelectedFolderChange,
-            onSubmit: handleFolderUpload,
-          }}
-          purgeControls={{
-            folderId: purgeFolderId,
-            folderLabel: purgeFolderLabel,
-            state: purgeState,
-            running: purging,
-            onStart: () => handlePurge(),
-            onResume: () => handlePurge({ resume: true }),
-          }}
-          moveControls={{
-            sourceId: moveSourceId,
-            sourceLabel: moveSourceLabel,
-            sourceKind: moveSourceKind,
-            destinationId: moveDestinationId,
-            destinationLabel: moveDestinationLabel,
-            state: moveState,
-            running: moveRunning,
-            onUseCurrentFolderAsDestination: useCurrentFolderAsMoveDestination,
-            onStartMerge: () => handleMoveOperation('merge'),
-            onStartAvoidConflict: () => handleMoveOperation('avoid_conflict'),
-            onResume: () => handleMoveOperation(moveState.mode || 'merge', { resume: true }),
-          }}
-          trashControls={{
-            selectedCount: selectedTrashCount,
-            action: trashAction,
-            onRestore: handleRestoreTrash,
-            onDelete: handleDeleteTrash,
-          }}
-          helpers={{
-            buildFolderPreview,
-            normalizeKey,
-            normalizeId,
-            getCurrentFolderMoveBlockReason,
-          }}
-        />
-      </section>
-
-      {previewItem && previewUrl ? (
-        <div className="preview-overlay" onClick={closePreview} role="presentation">
-          <section
-            className="preview-modal"
-            onClick={(event) => event.stopPropagation()}
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Preview ${previewItem.name || 'file'}`}
-          >
-            <div className="preview-head">
-              <div>
-                <div className="preview-title">{previewItem.name || 'Preview'}</div>
-                <div className="preview-meta">{`${formatBytes(previewItem.size)} • ${displayPath(previewItem.path || '')}`}</div>
-              </div>
-              <button className="ghost-button" onClick={closePreview} type="button">Close</button>
-            </div>
-            <div className="preview-body">
-              {isPdfPreview(previewItem) ? (
-                <iframe
-                  className="preview-document"
-                  src={previewUrl}
-                  title={previewItem.name || 'PDF preview'}
-                />
-              ) : isTextPreview(previewItem) ? (
-                <div className="preview-code">
-                  <div className="preview-code-lines">
-                    {previewLines.map((line, index) => (
-                      <div className="preview-code-line" key={`${previewItem.file_id}-${index + 1}`}>
-                        <div className="preview-code-line-number">{index + 1}</div>
-                        {previewLanguage === 'plain' ? (
-                          <code className="preview-code-line-content">{line || ' '}</code>
-                        ) : (
-                          <code
-                            className={`preview-code-line-content language-${previewLanguage}`}
-                            dangerouslySetInnerHTML={{ __html: line || ' ' }}
-                          />
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ) : (
-                <img className="preview-image" src={previewUrl} alt={previewItem.name || 'Preview'} />
-              )}
-            </div>
-          </section>
-        </div>
-      ) : null}
-    </main>
+      <PreviewModal
+        previewItem={previewItem}
+        previewUrl={previewUrl}
+        previewLines={previewLines}
+        previewLanguage={previewLanguage}
+        isPdfPreview={isPdfPreview}
+        isTextPreview={isTextPreview}
+        formatBytes={formatBytes}
+        displayPath={displayPath}
+        onClose={closePreview}
+      />
+    </>
   );
 }
