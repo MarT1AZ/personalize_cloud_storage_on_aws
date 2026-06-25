@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Prism from 'prismjs';
+import * as XLSX from 'xlsx';
 import 'prismjs/components/prism-clike';
 import 'prismjs/components/prism-markup';
 import 'prismjs/components/prism-css';
@@ -23,7 +24,8 @@ const MAX_FOLDER_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
 const PREVIEWABLE_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const PREVIEWABLE_DOCUMENT_EXTENSIONS = new Set(['.pdf']);
-const PREVIEWABLE_TEXT_EXTENSIONS = new Set(['.txt', '.md', '.json', '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.yml', '.yaml', '.xml', '.log']);
+const PREVIEWABLE_TEXT_EXTENSIONS = new Set(['.txt', '.md', '.json', '.py', '.js', '.ts', '.jsx', '.tsx', '.html', '.css', '.yml', '.yaml', '.xml', '.log', '.csv']);
+const PREVIEWABLE_SPREADSHEET_EXTENSIONS = new Set(['.xlsx']);
 const TEXT_PREVIEW_LANGUAGE_BY_EXTENSION = {
   '.txt': 'plain',
   '.md': 'markdown',
@@ -39,6 +41,7 @@ const TEXT_PREVIEW_LANGUAGE_BY_EXTENSION = {
   '.yaml': 'yaml',
   '.xml': 'xml-doc',
   '.log': 'plain',
+  '.csv': 'plain',
 };
 
 function normalizeKey(value) {
@@ -118,12 +121,13 @@ function getPreviewAvailability(item) {
   const isPreviewableImage = PREVIEWABLE_IMAGE_EXTENSIONS.has(extension);
   const isPreviewableDocument = PREVIEWABLE_DOCUMENT_EXTENSIONS.has(extension);
   const isPreviewableText = PREVIEWABLE_TEXT_EXTENSIONS.has(extension);
+  const isPreviewableSpreadsheet = PREVIEWABLE_SPREADSHEET_EXTENSIONS.has(extension);
 
-  if (!isPreviewableImage && !isPreviewableDocument && !isPreviewableText) {
+  if (!isPreviewableImage && !isPreviewableDocument && !isPreviewableText && !isPreviewableSpreadsheet) {
     return {
       canPreview: false,
       tag: 'No preview',
-      reason: 'Preview is only available for jpg, png, webp, gif, pdf, and supported text/code files.',
+      reason: 'Preview is only available for jpg, png, webp, gif, pdf, csv, xlsx, and supported text/code files.',
     };
   }
 
@@ -151,6 +155,14 @@ function isTextPreview(item) {
   return PREVIEWABLE_TEXT_EXTENSIONS.has(normalizeExtension(item?.file_extension));
 }
 
+function isCsvPreview(item) {
+  return normalizeExtension(item?.file_extension) === '.csv';
+}
+
+function isSpreadsheetPreview(item) {
+  return PREVIEWABLE_SPREADSHEET_EXTENSIONS.has(normalizeExtension(item?.file_extension));
+}
+
 function getPreviewLanguage(item) {
   return TEXT_PREVIEW_LANGUAGE_BY_EXTENSION[normalizeExtension(item?.file_extension)] || 'plain';
 }
@@ -171,6 +183,83 @@ function buildHighlightedPreviewLines(content, language) {
   }
 
   return Prism.highlight(normalizedContent, grammar, language).split('\n');
+}
+
+function parseCsvPreviewRows(content) {
+  const text = String(content || '').replace(/\r\n/g, '\n');
+  if (!text) {
+    return [['']];
+  }
+
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const nextChar = text[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && nextChar === '"') {
+        cell += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      row.push(cell);
+      cell = '';
+      continue;
+    }
+
+    if (char === '\n' && !inQuotes) {
+      row.push(cell);
+      rows.push(row);
+      row = [];
+      cell = '';
+      continue;
+    }
+
+    cell += char;
+  }
+
+  row.push(cell);
+  rows.push(row);
+  return rows;
+}
+
+function decodeBase64ToArrayBuffer(contentBase64) {
+  const binary = atob(String(contentBase64 || ''));
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes.buffer;
+}
+
+function parseSpreadsheetPreviewRows(contentBase64) {
+  const workbook = XLSX.read(decodeBase64ToArrayBuffer(contentBase64), { type: 'array' });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) {
+    return [['']];
+  }
+
+  const firstSheet = workbook.Sheets[firstSheetName];
+  const rows = XLSX.utils.sheet_to_json(firstSheet, {
+    header: 1,
+    blankrows: false,
+    defval: '',
+  });
+
+  if (!rows.length) {
+    return [['']];
+  }
+
+  return rows.map((row) => (Array.isArray(row) ? row.map((cell) => String(cell ?? '')) : ['']));
 }
 
 function formatBytes(value) {
@@ -501,6 +590,7 @@ export default function App() {
   const [previewItem, setPreviewItem] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
   const [previewTextContent, setPreviewTextContent] = useState('');
+  const [previewSpreadsheetContent, setPreviewSpreadsheetContent] = useState('');
   const [previewLoadingId, setPreviewLoadingId] = useState('');
   const [folderName, setFolderName] = useState('');
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -578,6 +668,19 @@ export default function App() {
     () => buildHighlightedPreviewLines(previewTextContent, previewLanguage),
     [previewLanguage, previewTextContent],
   );
+  const previewCsvRows = useMemo(
+    () => (isCsvPreview(previewItem) ? parseCsvPreviewRows(previewTextContent) : []),
+    [previewItem, previewTextContent],
+  );
+  const previewTableRows = useMemo(() => {
+    if (isSpreadsheetPreview(previewItem)) {
+      return parseSpreadsheetPreviewRows(previewSpreadsheetContent);
+    }
+    if (isCsvPreview(previewItem)) {
+      return parseCsvPreviewRows(previewTextContent);
+    }
+    return [];
+  }, [previewItem, previewSpreadsheetContent, previewTextContent]);
 
   function addUploadEntry(entry) {
     setUploadEntries((current) => [entry, ...current].slice(0, 6));
@@ -640,6 +743,7 @@ export default function App() {
     setPreviewItem(null);
     setPreviewUrl('');
     setPreviewTextContent('');
+    setPreviewSpreadsheetContent('');
     setPreviewLoadingId('');
     setFolderName('');
     setCreatingFolder(false);
@@ -1591,11 +1695,17 @@ export default function App() {
       if (!data?.url) {
         throw new Error('Preview URL not found');
       }
-      if (isTextPreview(file)) {
+      if (isSpreadsheetPreview(file)) {
+        const previewBinaryData = await api(`/files/${encodeURIComponent(fileId)}/preview-binary`, { authToken });
+        setPreviewSpreadsheetContent(String(previewBinaryData?.content_base64 || ''));
+        setPreviewTextContent('');
+      } else if (isTextPreview(file)) {
         const previewTextData = await api(`/files/${encodeURIComponent(fileId)}/preview-text`, { authToken });
         setPreviewTextContent(String(previewTextData?.content || ''));
+        setPreviewSpreadsheetContent('');
       } else {
         setPreviewTextContent('');
+        setPreviewSpreadsheetContent('');
       }
       setPreviewItem(file);
       setPreviewUrl(data.url);
@@ -1610,6 +1720,7 @@ export default function App() {
     setPreviewItem(null);
     setPreviewUrl('');
     setPreviewTextContent('');
+    setPreviewSpreadsheetContent('');
   }
 
   async function handleCreateFolder(event) {
@@ -2292,8 +2403,10 @@ export default function App() {
         previewItem={previewItem}
         previewUrl={previewUrl}
         previewLines={previewLines}
+        previewTableRows={previewTableRows}
         previewLanguage={previewLanguage}
         isPdfPreview={isPdfPreview}
+        isTablePreview={(item) => isCsvPreview(item) || isSpreadsheetPreview(item)}
         isTextPreview={isTextPreview}
         formatBytes={formatBytes}
         displayPath={displayPath}

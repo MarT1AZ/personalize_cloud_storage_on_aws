@@ -207,6 +207,14 @@ def get_preview_text(
     return storage_service.get_preview_text(file_id)
 
 
+@app.get("/api/files/{file_id}/preview-binary")
+def get_preview_binary(
+    file_id: str,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.get_preview_binary(file_id)
+
+
 @app.post("/api/files/{file_id}/rename")
 def rename_file(
     file_id: str,

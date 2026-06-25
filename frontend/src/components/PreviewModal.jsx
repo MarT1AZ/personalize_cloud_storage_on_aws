@@ -2,8 +2,10 @@ export default function PreviewModal({
   previewItem,
   previewUrl,
   previewLines,
+  previewTableRows,
   previewLanguage,
   isPdfPreview,
+  isTablePreview,
   isTextPreview,
   formatBytes,
   displayPath,
@@ -36,6 +38,25 @@ export default function PreviewModal({
               src={previewUrl}
               title={previewItem.name || 'PDF preview'}
             />
+          ) : isTablePreview(previewItem) ? (
+            <div className="preview-table-shell">
+              <table className="preview-table">
+                <tbody>
+                  {previewTableRows.map((row, rowIndex) => (
+                    <tr key={`${previewItem.file_id}-${rowIndex + 1}`}>
+                      {row.map((cell, cellIndex) => {
+                        const CellTag = rowIndex === 0 ? 'th' : 'td';
+                        return (
+                          <CellTag key={`${previewItem.file_id}-${rowIndex + 1}-${cellIndex + 1}`}>
+                            {cell || ' '}
+                          </CellTag>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           ) : isTextPreview(previewItem) ? (
             <div className="preview-code">
               <div className="preview-code-lines">
