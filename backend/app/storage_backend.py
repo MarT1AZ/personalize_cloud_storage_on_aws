@@ -30,6 +30,8 @@ class RenameRequest(BaseModel):
 class CreateFolderRequest(BaseModel):
     name: str
     parent_id: str = ""
+    folder_upload_operation_id: str = ""
+    folder_upload_root_id: str = ""
 
 
 class ObjectSelectionRequest(BaseModel):
@@ -52,10 +54,38 @@ class UploadInitRequest(BaseModel):
     file_type: str = ""
     folder_id: str = ""
     replace_existing: bool = False
+    folder_upload_operation_id: str = ""
+    folder_upload_root_id: str = ""
 
 
 class UploadCompleteRequest(BaseModel):
     upload_token: str
+
+
+class FolderUploadStartRequest(BaseModel):
+    root_folder_name: str
+    parent_id: str = ""
+    total_files: int
+    total_bytes: int
+
+
+class FolderUploadProgressRequest(BaseModel):
+    log_id: str
+    phase: str = ""
+    current_path: str = ""
+    last_uploaded_file_path: str = ""
+    uploaded_files: int = 0
+    uploaded_bytes: int = 0
+
+
+class FolderUploadFinalizeRequest(BaseModel):
+    log_id: str
+
+
+class FolderUploadFailRequest(BaseModel):
+    log_id: str
+    last_error: str = ""
+    current_path: str = ""
 
 
 app.add_exception_handler(ClientError, aws_exception_handler)
@@ -80,6 +110,7 @@ def get_storage_service(current_user: UserProfile = Depends(get_authenticated_us
         folder_metadata_table=settings.folder_metadata_table,
         deletion_log_table=settings.deletion_log_table,
         replacement_table=settings.replacement_table,
+        folder_upload_log_table=settings.folder_upload_log_table,
         move_log_table=settings.move_log_table,
         purge_log_table=settings.purge_log_table,
         operation_batch_limit=settings.operation_batch_limit,
@@ -139,6 +170,8 @@ def upload_init(
         file_type=request.file_type,
         folder_id=request.folder_id,
         replace_existing=request.replace_existing,
+        folder_upload_operation_id=request.folder_upload_operation_id,
+        folder_upload_root_id=request.folder_upload_root_id,
     )
 
 
@@ -188,7 +221,60 @@ def create_folder(
     request: CreateFolderRequest,
     storage_service: ObjectStorageService = Depends(get_storage_service),
 ):
-    return storage_service.create_folder(request.parent_id, request.name)
+    return storage_service.create_folder(
+        request.parent_id,
+        request.name,
+        folder_upload_operation_id=request.folder_upload_operation_id,
+        folder_upload_root_id=request.folder_upload_root_id,
+    )
+
+
+@app.post("/api/folder-upload/start")
+def start_folder_upload(
+    request: FolderUploadStartRequest,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.start_folder_upload(
+        root_folder_name=request.root_folder_name,
+        parent_id=request.parent_id,
+        total_files=request.total_files,
+        total_bytes=request.total_bytes,
+    )
+
+
+@app.post("/api/folder-upload/progress")
+def update_folder_upload_progress(
+    request: FolderUploadProgressRequest,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.update_folder_upload_progress(
+        log_id=request.log_id,
+        phase=request.phase,
+        current_path=request.current_path,
+        last_uploaded_file_path=request.last_uploaded_file_path,
+        uploaded_files=request.uploaded_files,
+        uploaded_bytes=request.uploaded_bytes,
+    )
+
+
+@app.post("/api/folder-upload/finalize")
+def finalize_folder_upload(
+    request: FolderUploadFinalizeRequest,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.finalize_folder_upload(request.log_id)
+
+
+@app.post("/api/folder-upload/fail")
+def fail_folder_upload(
+    request: FolderUploadFailRequest,
+    storage_service: ObjectStorageService = Depends(get_storage_service),
+):
+    return storage_service.fail_folder_upload(
+        log_id=request.log_id,
+        last_error=request.last_error,
+        current_path=request.current_path,
+    )
 
 
 @app.delete("/api/files/{file_id}")

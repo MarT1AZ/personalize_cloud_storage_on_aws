@@ -33,6 +33,7 @@ class Settings:
     folder_metadata_table: str
     deletion_log_table: str
     replacement_table: str
+    folder_upload_log_table: str
     move_log_table: str
     purge_log_table: str
     operation_batch_limit: int
@@ -54,6 +55,7 @@ def build_settings():
     folder_metadata_table = os.getenv("FOLDER_METADATA_TABLE", "folder-meta-data").strip() or "folder-meta-data"
     deletion_log_table = os.getenv("DELETION_LOG_TABLE", "deletion_log").strip() or "deletion_log"
     replacement_table = os.getenv("REPLACEMENT_TABLE", "replacement").strip() or "replacement"
+    folder_upload_log_table = os.getenv("FOLDER_UPLOAD_LOG_TABLE", "folder_upload_log").strip() or "folder_upload_log"
     move_log_table = os.getenv("MOVE_LOG_TABLE", "move_log").strip() or "move_log"
     purge_log_table = os.getenv("PURGE_LOG_TABLE", "purge_log").strip() or "purge_log"
     try:
@@ -71,6 +73,7 @@ def build_settings():
         folder_metadata_table=folder_metadata_table,
         deletion_log_table=deletion_log_table,
         replacement_table=replacement_table,
+        folder_upload_log_table=folder_upload_log_table,
         move_log_table=move_log_table,
         purge_log_table=purge_log_table,
         operation_batch_limit=operation_batch_limit,

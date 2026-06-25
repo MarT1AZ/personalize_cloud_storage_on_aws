@@ -21,6 +21,7 @@ import WorkspaceSidebar from './components/WorkspaceSidebar';
 const API_BASE = '/api';
 const AUTH_TOKEN_KEY = 'pcs_auth_token';
 const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
+const MAX_FOLDER_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024;
 const MAX_PREVIEW_BYTES = 20 * 1024 * 1024;
 const PREVIEWABLE_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 const PREVIEWABLE_DOCUMENT_EXTENSIONS = new Set(['.pdf']);
@@ -208,6 +209,56 @@ function formatDateTime(value) {
   }).format(date);
 }
 
+function buildFolderUploadSelection(fileList) {
+  const files = Array.from(fileList || [])
+    .map((file) => {
+      const relativePath = String(file.webkitRelativePath || file.name || '').replace(/^\/+/, '');
+      return {
+        file,
+        relativePath,
+      };
+    })
+    .filter((entry) => entry.relativePath);
+
+  if (files.length === 0) {
+    return null;
+  }
+
+  const firstSegments = files[0].relativePath.split('/');
+  const rootName = firstSegments[0] || '';
+  const folderPaths = new Set([rootName]);
+  let totalBytes = 0;
+
+  const normalizedFiles = files.map((entry) => {
+    const segments = entry.relativePath.split('/').filter(Boolean);
+    const relativeDir = segments.slice(0, -1).join('/');
+    totalBytes += Number(entry.file.size || 0);
+    for (let index = 1; index < segments.length - 1; index += 1) {
+      folderPaths.add(segments.slice(0, index + 1).join('/'));
+    }
+    return {
+      ...entry,
+      relativeDir,
+      name: segments[segments.length - 1] || entry.file.name,
+      size: Number(entry.file.size || 0),
+      type: entry.file.type || '',
+    };
+  });
+
+  return {
+    rootName,
+    totalFiles: normalizedFiles.length,
+    totalFolders: folderPaths.size,
+    totalBytes,
+    files: normalizedFiles.sort((left, right) => left.relativePath.localeCompare(right.relativePath, undefined, { sensitivity: 'base' })),
+    folderPaths: Array.from(folderPaths).sort((left, right) => {
+      const depthDiff = left.split('/').length - right.split('/').length;
+      if (depthDiff !== 0) return depthDiff;
+      return left.localeCompare(right, undefined, { sensitivity: 'base' });
+    }),
+  };
+}
+
 function sortItems(items, sortMode) {
   function compareAlphabet(left, right, direction = 'asc') {
     const leftValue = left.name || left.path || left.file_id;
@@ -354,6 +405,7 @@ export default function App() {
   const [trashedFiles, setTrashedFiles] = useState([]);
   const [currentFolderId, setCurrentFolderId] = useState('');
   const [currentPath, setCurrentPath] = useState('/');
+  const [currentFolderState, setCurrentFolderState] = useState(null);
   const [breadcrumbItems, setBreadcrumbItems] = useState([{ label: 'Root', folder_id: '' }]);
   const [viewMode, setViewMode] = useState('files');
   const [contentView, setContentView] = useState('objects');
@@ -370,8 +422,10 @@ export default function App() {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
+  const [selectedFolderUpload, setSelectedFolderUpload] = useState(null);
   const [replaceExistingUpload, setReplaceExistingUpload] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [folderUploading, setFolderUploading] = useState(false);
   const [uploadEntries, setUploadEntries] = useState([]);
   const [previewItem, setPreviewItem] = useState(null);
   const [previewUrl, setPreviewUrl] = useState('');
@@ -470,6 +524,7 @@ export default function App() {
     setTrashedFiles([]);
     setCurrentFolderId('');
     setCurrentPath('/');
+    setCurrentFolderState(null);
     setBreadcrumbItems([{ label: 'Root', folder_id: '' }]);
     setViewMode('files');
     setContentView('objects');
@@ -486,8 +541,10 @@ export default function App() {
     setError('');
     setSuccess('');
     setSelectedFile(null);
+    setSelectedFolderUpload(null);
     setReplaceExistingUpload(false);
     setUploading(false);
+    setFolderUploading(false);
     setUploadEntries([]);
     setPreviewItem(null);
     setPreviewUrl('');
@@ -570,6 +627,7 @@ export default function App() {
       const data = await api(`/files${suffix}`, { authToken });
       setCurrentFolderId(data?.current_folder_id || '');
       setCurrentPath(displayPath(data?.current_path || '/'));
+      setCurrentFolderState(data?.current_folder_state || null);
       setBreadcrumbItems(Array.isArray(data?.breadcrumbs) && data.breadcrumbs.length > 0 ? data.breadcrumbs : [{ label: 'Root', folder_id: '' }]);
       setFolders(Array.isArray(data?.folders) ? data.folders : []);
       setFiles(Array.isArray(data?.files) ? data.files : []);
@@ -611,6 +669,7 @@ export default function App() {
       setFiles([]);
       setCurrentFolderId('');
       setCurrentPath('/trash');
+      setCurrentFolderState(null);
       setBreadcrumbItems([{ label: 'Trash', folder_id: '' }]);
       setTrashedFiles(Array.isArray(data?.files) ? data.files : []);
       setSelectedTrashIds({});
@@ -925,6 +984,211 @@ export default function App() {
 
     setError('');
     setSelectedFile(file);
+  }
+
+  function handleSelectedFolderChange(event) {
+    const summary = buildFolderUploadSelection(event.target.files);
+    if (!summary) {
+      setSelectedFolderUpload(null);
+      return;
+    }
+
+    if (summary.totalBytes > MAX_FOLDER_UPLOAD_BYTES) {
+      setSelectedFolderUpload(null);
+      setError('Selected folder is larger than 2GB.');
+      event.target.value = '';
+      return;
+    }
+
+    setError('');
+    setSelectedFolderUpload(summary);
+  }
+
+  async function handleFolderUpload(event) {
+    event.preventDefault();
+    if (!selectedFolderUpload) return;
+
+    const form = event.currentTarget;
+    const entryId = `folder-upload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    let uploadSession = null;
+    let lastCurrentPath = '';
+    let uploadedFiles = 0;
+    let uploadedBytes = 0;
+    let transferCompleted = false;
+
+    try {
+      setError('');
+      setSuccess('');
+      setFolderUploading(true);
+      addUploadEntry({
+        id: entryId,
+        name: `${selectedFolderUpload.rootName}/`,
+        size: selectedFolderUpload.totalBytes,
+        progress: 0,
+        status: 'preparing',
+        targetPath: currentPath || '/',
+        mode: 'folder',
+        errorMessage: '',
+      });
+
+      uploadSession = await api('/folder-upload/start', {
+        method: 'POST',
+        body: JSON.stringify({
+          root_folder_name: selectedFolderUpload.rootName,
+          parent_id: currentFolderId,
+          total_files: selectedFolderUpload.totalFiles,
+          total_bytes: selectedFolderUpload.totalBytes,
+        }),
+        authToken,
+      });
+
+      const folderIdByPath = new Map([[selectedFolderUpload.rootName, uploadSession.root_folder_id]]);
+      updateUploadEntry(entryId, { status: 'uploading' });
+
+      for (const folderPath of selectedFolderUpload.folderPaths) {
+        if (folderPath === selectedFolderUpload.rootName) {
+          continue;
+        }
+        const lastSlashIndex = folderPath.lastIndexOf('/');
+        const parentPath = lastSlashIndex > 0 ? folderPath.slice(0, lastSlashIndex) : selectedFolderUpload.rootName;
+        const folderName = lastSlashIndex >= 0 ? folderPath.slice(lastSlashIndex + 1) : folderPath;
+        const parentFolderId = folderIdByPath.get(parentPath) || uploadSession.root_folder_id;
+        lastCurrentPath = folderPath;
+        await api('/folders', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: folderName,
+            parent_id: parentFolderId,
+            folder_upload_operation_id: uploadSession.operation_id,
+            folder_upload_root_id: uploadSession.root_folder_id,
+          }),
+          authToken,
+        }).then((data) => {
+          folderIdByPath.set(folderPath, data?.created_folder_id || '');
+        });
+        await api('/folder-upload/progress', {
+          method: 'POST',
+          body: JSON.stringify({
+            log_id: uploadSession.log_id,
+            phase: 'creating_folder_tree',
+            current_path: folderPath,
+            uploaded_files: uploadedFiles,
+            uploaded_bytes: uploadedBytes,
+          }),
+          authToken,
+        });
+      }
+
+      for (const entry of selectedFolderUpload.files) {
+        const parentPath = entry.relativeDir || selectedFolderUpload.rootName;
+        const parentFolderId = folderIdByPath.get(parentPath) || uploadSession.root_folder_id;
+        lastCurrentPath = entry.relativePath;
+        const uploadInit = await api('/upload/init', {
+          method: 'POST',
+          body: JSON.stringify({
+            file_name: entry.name,
+            file_size: entry.size,
+            file_type: entry.type,
+            folder_id: parentFolderId,
+            replace_existing: false,
+            folder_upload_operation_id: uploadSession.operation_id,
+            folder_upload_root_id: uploadSession.root_folder_id,
+          }),
+          authToken,
+        });
+
+        await uploadToPresignedPost(
+          uploadInit?.upload_url || '',
+          uploadInit?.upload_fields || {},
+          entry.file,
+          {
+            onProgress: (loaded) => {
+              const safeLoaded = Math.min(Number(loaded || 0), entry.size);
+              const totalLoaded = uploadedBytes + safeLoaded;
+              const progress = selectedFolderUpload.totalBytes > 0
+                ? Math.min(Math.round((totalLoaded / selectedFolderUpload.totalBytes) * 100), 100)
+                : 0;
+              updateUploadEntry(entryId, {
+                progress,
+                status: 'uploading',
+              });
+            },
+          },
+        );
+
+        await api('/upload/complete', {
+          method: 'POST',
+          body: JSON.stringify({
+            upload_token: uploadInit?.upload_token || '',
+          }),
+          authToken,
+        });
+
+        uploadedFiles += 1;
+        uploadedBytes += entry.size;
+        updateUploadEntry(entryId, {
+          progress: selectedFolderUpload.totalBytes > 0
+            ? Math.min(Math.round((uploadedBytes / selectedFolderUpload.totalBytes) * 100), 100)
+            : 100,
+          status: 'uploading',
+        });
+        await api('/folder-upload/progress', {
+          method: 'POST',
+          body: JSON.stringify({
+            log_id: uploadSession.log_id,
+            phase: 'uploading_files',
+            current_path: entry.relativePath,
+            last_uploaded_file_path: entry.relativePath,
+            uploaded_files: uploadedFiles,
+            uploaded_bytes: uploadedBytes,
+          }),
+          authToken,
+        });
+      }
+
+      transferCompleted = true;
+      await api('/folder-upload/finalize', {
+        method: 'POST',
+        body: JSON.stringify({
+          log_id: uploadSession.log_id,
+        }),
+        authToken,
+      });
+
+      updateUploadEntry(entryId, {
+        progress: 100,
+        status: 'success',
+        errorMessage: '',
+      });
+      setSelectedFolderUpload(null);
+      form.reset();
+      await loadFiles(currentFolderId, true);
+    } catch (err) {
+      if (uploadSession?.log_id && !transferCompleted) {
+        try {
+          await api('/folder-upload/fail', {
+            method: 'POST',
+            body: JSON.stringify({
+              log_id: uploadSession.log_id,
+              last_error: err.message || 'Folder upload failed',
+              current_path: lastCurrentPath,
+            }),
+            authToken,
+          });
+        } catch {
+          // Preserve the original upload error for the user.
+        }
+      }
+
+      updateUploadEntry(entryId, {
+        status: 'failed',
+        errorMessage: err.message || 'Folder upload failed',
+      });
+      setError(err.message || 'Folder upload failed');
+      await loadFiles(currentFolderId, true, true, true);
+    } finally {
+      setFolderUploading(false);
+    }
   }
 
   async function handleDelete(rawObjectId) {
@@ -1616,6 +1880,7 @@ export default function App() {
               totalItemCount={totalItemCount}
               breadcrumbItems={breadcrumbItems}
               currentFolderId={currentFolderId}
+              currentFolderState={currentFolderState}
               searchQuery={searchQuery}
               sortMode={sortMode}
               groupMode={groupMode}
@@ -1696,12 +1961,19 @@ export default function App() {
           uploadForm={{
             selectedFile,
             replaceExisting: replaceExistingUpload,
-            submitting: uploading,
+            submitting: uploading || folderUploading,
             uploadEntries,
             formatBytes,
             onFileChange: handleSelectedFileChange,
             onReplaceExistingChange: (event) => setReplaceExistingUpload(event.target.checked),
             onSubmit: handleUpload,
+          }}
+          folderUploadForm={{
+            summary: selectedFolderUpload,
+            submitting: folderUploading || uploading,
+            formatBytes,
+            onFolderChange: handleSelectedFolderChange,
+            onSubmit: handleFolderUpload,
           }}
           purgeControls={{
             folderId: purgeFolderId,

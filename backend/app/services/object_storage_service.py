@@ -25,6 +25,7 @@ class ObjectStorageService:
     LOG_STATUS_RUNNING = "running"
     LOG_STATUS_FAILED = "failed"
     LOG_STATUS_DONE = "done"
+    LOG_STATUS_REPAIR_REQUIRED = "repair_required"
     LOG_OPERATION_DELETE = "hard_delete"
     LOG_OPERATION_PURGE = "purge"
     LOG_OPERATION_MOVE = "move"
@@ -37,6 +38,10 @@ class ObjectStorageService:
     STATUS_MOVED = "moved"
     STATUS_PENDING = "pending"
     STATUS_REPLACEMENT_PENDING_DELETE = "replacement_pending_delete"
+    UPLOAD_STATE_UPLOADING = "uploading"
+    UPLOAD_STATE_PENDING_FINALIZE = "pending_finalize"
+    UPLOAD_STATE_FINALIZING = "finalizing"
+    UPLOAD_STATE_REPAIR_REQUIRED = "repair_required"
     REPLACEMENT_DELETE_STATUS_PENDING = "pending_delete"
     REPLACEMENT_DELETE_STATUS_DELETED = "deleted"
     REPLACEMENT_DELETE_STATUS_RESTORED = "restored"
@@ -52,6 +57,7 @@ class ObjectStorageService:
         folder_metadata_table: str,
         deletion_log_table: str,
         replacement_table: str,
+        folder_upload_log_table: str,
         move_log_table: str,
         purge_log_table: str,
         operation_batch_limit: int = 100,
@@ -66,6 +72,7 @@ class ObjectStorageService:
         self.folder_table = self.dynamodb.Table(folder_metadata_table)
         self.deletion_log_table = self.dynamodb.Table(deletion_log_table)
         self.replacement_table = self.dynamodb.Table(replacement_table)
+        self.folder_upload_log_table = self.dynamodb.Table(folder_upload_log_table)
         self.move_log_table = self.dynamodb.Table(move_log_table)
         self.purge_log_table = self.dynamodb.Table(purge_log_table)
         self.resource_guard = ResourceGuard(s3_client=self.s3)
@@ -138,6 +145,7 @@ class ObjectStorageService:
             "breadcrumbs": breadcrumbs,
             "folders": folders,
             "files": files,
+            "current_folder_state": self.serialize_folder_state(current_folder),
         }
         if partial_errors:
             response["partial_errors"] = partial_errors
@@ -186,6 +194,8 @@ class ObjectStorageService:
         file_type: str = "",
         folder_id: str = "",
         replace_existing: bool = False,
+        folder_upload_operation_id: str = "",
+        folder_upload_root_id: str = "",
     ):
         normalized_file_name = str(file_name or "").strip()
         if not normalized_file_name:
@@ -250,6 +260,10 @@ class ObjectStorageService:
             "created_at": self.iso_from_datetime(now),
             "deleted_at": None,
         }
+        if folder_upload_operation_id:
+            metadata["folder_upload_operation_id"] = folder_upload_operation_id
+            metadata["folder_upload_root_id"] = folder_upload_root_id
+            metadata["upload_state"] = self.UPLOAD_STATE_UPLOADING
         object_key = self.build_file_key(metadata)
         self.file_table.put_item(
             Item=metadata,
@@ -274,6 +288,8 @@ class ObjectStorageService:
             replacement_log_id=replacement_log["log_id"] if replacement_log else "",
             replacement_operation_id=replacement_operation_id,
             replacing_file_id=replacing_file_id,
+            folder_upload_operation_id=folder_upload_operation_id,
+            folder_upload_root_id=folder_upload_root_id,
         )
 
         presigned_post_kwargs = {
@@ -325,6 +341,8 @@ class ObjectStorageService:
         replacement_log_id = self.normalize_id(payload.get("replacement_log_id"))
         replacement_operation_id = self.normalize_id(payload.get("replacement_operation_id"))
         replacing_file_id = self.normalize_id(payload.get("replacing_file_id"))
+        folder_upload_operation_id = self.normalize_id(payload.get("folder_upload_operation_id"))
+        folder_upload_root_id = self.normalize_id(payload.get("folder_upload_root_id"))
 
         if replacing_file_id:
             self.resource_guard.tables(self.file_table, self.replacement_table, self.deletion_log_table)
@@ -372,7 +390,13 @@ class ObjectStorageService:
                     replacement_log_id,
                     phase="finalizing_new",
                 )
-            self.mark_upload_file_active(file_id, file_name, file_extension)
+            self.mark_upload_file_active(
+                file_id,
+                file_name,
+                file_extension,
+                folder_upload_operation_id=folder_upload_operation_id,
+                folder_upload_root_id=folder_upload_root_id,
+            )
             new_file_activated = True
             if replacing_file_id and replacement_metadata:
                 if replacement_log_id:
@@ -432,7 +456,14 @@ class ObjectStorageService:
             "replacement_operation_id": replacement_operation_id,
         }
 
-    def create_folder(self, parent_id: str, name: str):
+    def create_folder(
+        self,
+        parent_id: str,
+        name: str,
+        *,
+        folder_upload_operation_id: str = "",
+        folder_upload_root_id: str = "",
+    ):
         self.resource_guard.tables(self.folder_table)
         self.resource_guard.s3_bucket(self.bucket)
         parent_folder = self.get_parent_folder(parent_id)
@@ -441,6 +472,18 @@ class ObjectStorageService:
             raise HTTPException(status_code=400, detail="Folder name is required")
         if self.has_active_folder_with_name(parent_folder["folder_id"] if parent_folder else None, normalized_name):
             raise HTTPException(status_code=400, detail="An active folder with this name already exists")
+
+        if folder_upload_operation_id:
+            metadata = self.create_folder_metadata_for_upload(
+                parent_folder_id=parent_folder["folder_id"] if parent_folder else None,
+                folder_name=normalized_name,
+                operation_id=folder_upload_operation_id,
+                root_folder_id=folder_upload_root_id,
+            )
+            return {
+                "created_folder_id": metadata["folder_id"],
+                "created_folder_name": normalized_name,
+            }
 
         folder_id = self.generate_short_id()
         now = self.now_iso()
@@ -485,6 +528,45 @@ class ObjectStorageService:
             "created_folder_name": normalized_name,
         }
 
+    def create_folder_metadata_for_upload(
+        self,
+        *,
+        parent_folder_id: str | None,
+        folder_name: str,
+        operation_id: str,
+        root_folder_id: str,
+        upload_state: str = "",
+        upload_warning: str = "",
+    ):
+        metadata = {
+            "folder_id": self.generate_short_id(),
+            "user_id": self.user_id,
+            "parent_folder_id": self.to_storage_parent_folder_id(parent_folder_id),
+            "folder_name": folder_name,
+            "status": self.STATUS_ACTIVE,
+            "created_at": self.now_iso(),
+            "deleted_at": None,
+            "children_count": 0,
+            "folder_upload_operation_id": operation_id,
+            "folder_upload_root_id": root_folder_id,
+        }
+        if upload_state:
+            metadata["upload_state"] = upload_state
+        if upload_warning:
+            metadata["upload_warning"] = upload_warning
+
+        self.s3.put_object(
+            Bucket=self.bucket,
+            Key=self.build_folder_key(metadata),
+            Body=b"",
+        )
+        self.folder_table.put_item(
+            Item=metadata,
+            ConditionExpression="attribute_not_exists(folder_id)",
+        )
+        self.increment_children_count(parent_folder_id)
+        return metadata
+
     def delete_pending_file_row(self, file_id: str):
         try:
             self.file_table.delete_item(
@@ -494,18 +576,34 @@ class ObjectStorageService:
         except Exception as exc:
             logger.error("Failed to delete pending file row [%s]: %s", file_id, exc)
 
-    def mark_upload_file_active(self, file_id: str, file_name: str, file_extension: str):
+    def mark_upload_file_active(
+        self,
+        file_id: str,
+        file_name: str,
+        file_extension: str,
+        *,
+        folder_upload_operation_id: str = "",
+        folder_upload_root_id: str = "",
+    ):
+        update_expression = "SET file_name = :file_name, file_extension = :file_extension, #status = :status, deleted_at = :deleted_at"
+        expression_attribute_values = {
+            ":file_name": file_name,
+            ":file_extension": file_extension or self.get_file_extension(file_name),
+            ":status": self.STATUS_ACTIVE,
+            ":deleted_at": None,
+            ":pending_status": self.STATUS_PENDING,
+        }
+        if folder_upload_operation_id:
+            update_expression += ", upload_state = :upload_state, folder_upload_operation_id = :folder_upload_operation_id, folder_upload_root_id = :folder_upload_root_id"
+            expression_attribute_values[":upload_state"] = self.UPLOAD_STATE_PENDING_FINALIZE
+            expression_attribute_values[":folder_upload_operation_id"] = folder_upload_operation_id
+            expression_attribute_values[":folder_upload_root_id"] = folder_upload_root_id
+
         self.file_table.update_item(
             Key={"file_id": file_id},
-            UpdateExpression="SET file_name = :file_name, file_extension = :file_extension, #status = :status, deleted_at = :deleted_at",
+            UpdateExpression=update_expression,
             ExpressionAttributeNames={"#status": "status"},
-            ExpressionAttributeValues={
-                ":file_name": file_name,
-                ":file_extension": file_extension or self.get_file_extension(file_name),
-                ":status": self.STATUS_ACTIVE,
-                ":deleted_at": None,
-                ":pending_status": self.STATUS_PENDING,
-            },
+            ExpressionAttributeValues=expression_attribute_values,
             ConditionExpression="attribute_exists(file_id) AND #status = :pending_status",
         )
 
@@ -1276,6 +1374,8 @@ class ObjectStorageService:
             "kind": "folder",
             "name": folder_name,
             "status": folder_status,
+            "upload_state": "" if is_virtual_root else str(folder_metadata.get("upload_state") or ""),
+            "upload_warning": "" if is_virtual_root else str(folder_metadata.get("upload_warning") or ""),
             "path": base_display_path if is_virtual_root else f"{base_display_path}",
             "children": children,
         }
@@ -1286,6 +1386,7 @@ class ObjectStorageService:
             "kind": "file",
             "name": file_metadata["file_name"],
             "status": str(file_metadata.get("status") or self.STATUS_ACTIVE),
+            "upload_state": str(file_metadata.get("upload_state") or ""),
             "path": f"{base_display_path}{file_metadata['file_name']}",
             "children": [],
         }
@@ -1719,6 +1820,39 @@ class ObjectStorageService:
         self.replacement_table.put_item(Item=metadata)
         return metadata
 
+    def create_folder_upload_log(
+        self,
+        *,
+        root_folder_id: str,
+        root_folder_name: str,
+        root_parent_id: str | None,
+        total_files: int,
+        total_bytes: int,
+    ):
+        now = self.now_iso()
+        metadata = {
+            "log_id": self.generate_short_id(),
+            "operation_id": self.generate_short_id(),
+            "user_id": self.user_id,
+            "status": self.LOG_STATUS_RUNNING,
+            "phase": "ready_to_upload",
+            "last_error": "",
+            "root_folder_id": root_folder_id,
+            "root_parent_folder_id": root_parent_id or "",
+            "root_folder_name": root_folder_name,
+            "total_files": max(int(total_files or 0), 0),
+            "total_bytes": max(int(total_bytes or 0), 0),
+            "uploaded_files": 0,
+            "uploaded_bytes": 0,
+            "current_path": "",
+            "last_uploaded_file_path": "",
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": "",
+        }
+        self.folder_upload_log_table.put_item(Item=metadata)
+        return metadata
+
     def create_purge_log(
         self,
         *,
@@ -1975,6 +2109,62 @@ class ObjectStorageService:
 
         self.replacement_table.update_item(**update_kwargs)
 
+    def update_folder_upload_log(
+        self,
+        log_id: str,
+        *,
+        status: str | None = None,
+        phase: str | None = None,
+        last_error: str | None = None,
+        uploaded_files: int | None = None,
+        uploaded_bytes: int | None = None,
+        current_path: str | None = None,
+        last_uploaded_file_path: str | None = None,
+        completed_at: str | None = None,
+    ):
+        update_parts = ["updated_at = :updated_at"]
+        expression_attribute_names = {}
+        expression_attribute_values = {
+            ":updated_at": self.now_iso(),
+        }
+
+        if status is not None:
+            update_parts.append("#status = :status")
+            expression_attribute_names["#status"] = "status"
+            expression_attribute_values[":status"] = status
+        if phase is not None:
+            update_parts.append("phase = :phase")
+            expression_attribute_values[":phase"] = phase
+        if last_error is not None:
+            update_parts.append("last_error = :last_error")
+            expression_attribute_values[":last_error"] = last_error
+        if uploaded_files is not None:
+            update_parts.append("uploaded_files = :uploaded_files")
+            expression_attribute_values[":uploaded_files"] = max(int(uploaded_files or 0), 0)
+        if uploaded_bytes is not None:
+            update_parts.append("uploaded_bytes = :uploaded_bytes")
+            expression_attribute_values[":uploaded_bytes"] = max(int(uploaded_bytes or 0), 0)
+        if current_path is not None:
+            update_parts.append("current_path = :current_path")
+            expression_attribute_values[":current_path"] = current_path
+        if last_uploaded_file_path is not None:
+            update_parts.append("last_uploaded_file_path = :last_uploaded_file_path")
+            expression_attribute_values[":last_uploaded_file_path"] = last_uploaded_file_path
+        if completed_at is not None:
+            update_parts.append("completed_at = :completed_at")
+            expression_attribute_values[":completed_at"] = completed_at
+
+        update_kwargs = {
+            "Key": {"log_id": log_id},
+            "UpdateExpression": "SET " + ", ".join(update_parts),
+            "ExpressionAttributeValues": expression_attribute_values,
+            "ConditionExpression": "attribute_exists(log_id)",
+        }
+        if expression_attribute_names:
+            update_kwargs["ExpressionAttributeNames"] = expression_attribute_names
+
+        self.folder_upload_log_table.update_item(**update_kwargs)
+
     def update_purge_log(
         self,
         log_id: str,
@@ -2070,6 +2260,229 @@ class ObjectStorageService:
 
         response = self.purge_log_table.get_item(Key={"log_id": log_id})
         return response.get("Item")
+
+    def get_folder_upload_log_or_none(self, log_id: str):
+        if not log_id:
+            return None
+
+        response = self.folder_upload_log_table.get_item(Key={"log_id": log_id})
+        return response.get("Item")
+
+    def start_folder_upload(self, *, root_folder_name: str, parent_id: str = "", total_files: int, total_bytes: int):
+        self.resource_guard.tables(self.folder_table, self.folder_upload_log_table)
+        self.resource_guard.s3_bucket(self.bucket)
+        parent_folder = self.get_parent_folder(parent_id)
+        normalized_name = str(root_folder_name or "").strip().strip("/")
+        if not normalized_name:
+            raise HTTPException(status_code=400, detail="Root folder name is required")
+        if self.has_active_folder_with_name(parent_folder["folder_id"] if parent_folder else None, normalized_name):
+            raise HTTPException(status_code=400, detail="An active folder with this name already exists")
+
+        log_id = self.generate_short_id()
+        operation_id = self.generate_short_id()
+        now = self.now_iso()
+        root_metadata = {
+            "folder_id": self.generate_short_id(),
+            "user_id": self.user_id,
+            "parent_folder_id": self.to_storage_parent_folder_id(parent_folder["folder_id"] if parent_folder else None),
+            "folder_name": normalized_name,
+            "status": self.STATUS_ACTIVE,
+            "created_at": now,
+            "deleted_at": None,
+            "children_count": 0,
+            "folder_upload_operation_id": operation_id,
+            "folder_upload_root_id": "",
+            "upload_state": self.UPLOAD_STATE_UPLOADING,
+            "upload_warning": "This folder upload is still in progress.",
+        }
+        root_metadata["folder_upload_root_id"] = root_metadata["folder_id"]
+        self.s3.put_object(
+            Bucket=self.bucket,
+            Key=self.build_folder_key(root_metadata),
+            Body=b"",
+        )
+        self.folder_table.put_item(
+            Item=root_metadata,
+            ConditionExpression="attribute_not_exists(folder_id)",
+        )
+        self.increment_children_count(parent_folder["folder_id"] if parent_folder else None)
+
+        log_metadata = {
+            "log_id": log_id,
+            "operation_id": operation_id,
+            "user_id": self.user_id,
+            "status": self.LOG_STATUS_RUNNING,
+            "phase": "ready_to_upload",
+            "last_error": "",
+            "root_folder_id": root_metadata["folder_id"],
+            "root_parent_folder_id": parent_folder["folder_id"] if parent_folder else "",
+            "root_folder_name": normalized_name,
+            "total_files": max(int(total_files or 0), 0),
+            "total_bytes": max(int(total_bytes or 0), 0),
+            "uploaded_files": 0,
+            "uploaded_bytes": 0,
+            "current_path": "",
+            "last_uploaded_file_path": "",
+            "created_at": now,
+            "updated_at": now,
+            "completed_at": "",
+        }
+        self.folder_upload_log_table.put_item(Item=log_metadata)
+        return {
+            "log_id": log_id,
+            "operation_id": operation_id,
+            "root_folder_id": root_metadata["folder_id"],
+            "root_folder_name": normalized_name,
+        }
+
+    def update_folder_upload_progress(
+        self,
+        *,
+        log_id: str,
+        phase: str = "",
+        current_path: str = "",
+        last_uploaded_file_path: str = "",
+        uploaded_files: int = 0,
+        uploaded_bytes: int = 0,
+    ):
+        metadata = self.get_folder_upload_log_or_none(log_id)
+        if not metadata or metadata.get("user_id") != self.user_id:
+            raise HTTPException(status_code=404, detail="Folder upload log not found")
+
+        self.update_folder_upload_log(
+            log_id,
+            phase=phase or None,
+            current_path=current_path or None,
+            last_uploaded_file_path=last_uploaded_file_path or None,
+            uploaded_files=uploaded_files,
+            uploaded_bytes=uploaded_bytes,
+        )
+        return {"updated": log_id}
+
+    def finalize_folder_upload(self, log_id: str):
+        metadata = self.get_folder_upload_log_or_none(log_id)
+        if not metadata or metadata.get("user_id") != self.user_id:
+            raise HTTPException(status_code=404, detail="Folder upload log not found")
+
+        operation_id = self.normalize_id(metadata.get("operation_id"))
+        root_folder_id = self.normalize_id(metadata.get("root_folder_id"))
+        root_folder = self.get_folder(root_folder_id, require_active=False)
+        self.update_folder_upload_log(log_id, phase="finalizing")
+        self.mark_folder_upload_root_state(
+            root_folder_id,
+            upload_state=self.UPLOAD_STATE_FINALIZING,
+            upload_warning="This folder upload is being finalized.",
+        )
+
+        try:
+            folders = self.scan_table(
+                self.folder_table,
+                Attr("user_id").eq(self.user_id) & Attr("folder_upload_operation_id").eq(operation_id),
+            )
+            files = self.scan_table(
+                self.file_table,
+                Attr("user_id").eq(self.user_id) & Attr("folder_upload_operation_id").eq(operation_id),
+            )
+
+            folders.sort(key=lambda item: ((item.get("path") or ""), (item.get("created_at") or ""), (item.get("folder_id") or "")))
+            for folder in folders:
+                if folder.get("folder_id") == root_folder_id:
+                    continue
+                self.clear_folder_upload_tracking(folder["folder_id"])
+            for file_metadata in files:
+                self.clear_file_upload_tracking(file_metadata["file_id"])
+            self.clear_folder_upload_tracking(root_folder_id)
+            self.update_folder_upload_log(
+                log_id,
+                status=self.LOG_STATUS_DONE,
+                phase="done",
+                completed_at=self.now_iso(),
+                last_error="",
+            )
+            return {
+                "log_id": log_id,
+                "root_folder_id": root_folder_id,
+                "status": self.LOG_STATUS_DONE,
+            }
+        except Exception as exc:
+            root_warning = "This folder upload is incomplete and needs repair."
+            self.mark_folder_upload_root_state(
+                root_folder_id,
+                upload_state=self.UPLOAD_STATE_REPAIR_REQUIRED,
+                upload_warning=root_warning,
+            )
+            self.update_folder_upload_log(
+                log_id,
+                status=self.LOG_STATUS_REPAIR_REQUIRED,
+                phase="repair_required",
+                last_error=str(exc),
+            )
+            raise HTTPException(
+                status_code=409,
+                detail="Folder upload finished transferring, but finalization failed. The folder remains visible and needs repair.",
+            ) from exc
+
+    def fail_folder_upload(self, *, log_id: str, last_error: str = "", current_path: str = ""):
+        metadata = self.get_folder_upload_log_or_none(log_id)
+        if not metadata or metadata.get("user_id") != self.user_id:
+            raise HTTPException(status_code=404, detail="Folder upload log not found")
+
+        operation_id = self.normalize_id(metadata.get("operation_id"))
+        root_folder_id = self.normalize_id(metadata.get("root_folder_id"))
+        root_parent_id = self.normalize_id(metadata.get("root_parent_folder_id"))
+        folders = self.scan_table(
+            self.folder_table,
+            Attr("user_id").eq(self.user_id) & Attr("folder_upload_operation_id").eq(operation_id),
+        )
+        files = self.scan_table(
+            self.file_table,
+            Attr("user_id").eq(self.user_id) & Attr("folder_upload_operation_id").eq(operation_id),
+        )
+
+        file_delete_keys = []
+        for file_metadata in files:
+            try:
+                file_delete_keys.append({"Key": self.build_file_key(file_metadata)})
+            except Exception:
+                continue
+        folder_delete_keys = []
+        folders_by_depth = sorted(
+            folders,
+            key=lambda item: self.build_object_depth(self.build_folder_key(item)),
+            reverse=True,
+        )
+        for folder_metadata in folders_by_depth:
+            try:
+                folder_delete_keys.append({"Key": self.build_folder_key(folder_metadata)})
+            except Exception:
+                continue
+
+        self.delete_s3_keys(file_delete_keys + folder_delete_keys)
+
+        affected_parent_ids = {root_parent_id}
+        for file_metadata in files:
+            affected_parent_ids.add(self.normalize_id(self.from_storage_parent_folder_id(file_metadata.get("parent_folder_id"))))
+            self.file_table.delete_item(Key={"file_id": file_metadata["file_id"]})
+        for folder_metadata in folders_by_depth:
+            affected_parent_ids.add(self.normalize_id(self.from_storage_parent_folder_id(folder_metadata.get("parent_folder_id"))))
+            self.folder_table.delete_item(Key={"folder_id": folder_metadata["folder_id"]})
+
+        for parent_folder_id in {item for item in affected_parent_ids if item}:
+            self.reconcile_folder_children_count_chain(parent_folder_id)
+
+        self.update_folder_upload_log(
+            log_id,
+            status=self.LOG_STATUS_FAILED,
+            phase="failed",
+            last_error=last_error or "Folder upload failed",
+            current_path=current_path or None,
+            completed_at=self.now_iso(),
+        )
+        return {
+            "log_id": log_id,
+            "root_folder_id": root_folder_id,
+            "status": self.LOG_STATUS_FAILED,
+        }
 
     def mark_log_resumed(self, log_id: str):
         metadata = self.get_move_log_or_none(log_id)
@@ -2204,6 +2617,8 @@ class ObjectStorageService:
         replacement_log_id: str = "",
         replacement_operation_id: str = "",
         replacing_file_id: str = "",
+        folder_upload_operation_id: str = "",
+        folder_upload_root_id: str = "",
     ):
         expires_at = int(issued_at.timestamp()) + self.DIRECT_UPLOAD_EXPIRES_SECONDS
         return jwt.encode(
@@ -2218,6 +2633,8 @@ class ObjectStorageService:
                 "replacement_log_id": replacement_log_id,
                 "replacement_operation_id": replacement_operation_id,
                 "replacing_file_id": replacing_file_id,
+                "folder_upload_operation_id": folder_upload_operation_id,
+                "folder_upload_root_id": folder_upload_root_id,
                 "exp": expires_at,
             },
             auth_settings.jwt_secret,
@@ -2485,6 +2902,8 @@ class ObjectStorageService:
             "size": None,
             "upload_date": metadata.get("created_at"),
             "file_extension": "",
+            "upload_state": str(metadata.get("upload_state") or ""),
+            "upload_warning": str(metadata.get("upload_warning") or ""),
         }
 
     def serialize_file(self, metadata, base_display_path: str, size=None):
@@ -2496,6 +2915,17 @@ class ObjectStorageService:
             "size": size,
             "upload_date": metadata.get("created_at"),
             "file_extension": metadata.get("file_extension", ""),
+            "upload_state": str(metadata.get("upload_state") or ""),
+        }
+
+    def serialize_folder_state(self, metadata):
+        if not metadata:
+            return None
+        return {
+            "folder_id": metadata.get("folder_id", ""),
+            "name": metadata.get("folder_name", ""),
+            "upload_state": str(metadata.get("upload_state") or ""),
+            "upload_warning": str(metadata.get("upload_warning") or ""),
         }
 
     def serialize_trashed_file(self, metadata):
@@ -2510,6 +2940,46 @@ class ObjectStorageService:
             "upload_date": metadata.get("created_at"),
             "file_extension": metadata.get("file_extension", ""),
         }
+
+    def mark_folder_upload_root_state(self, folder_id: str, *, upload_state: str, upload_warning: str):
+        self.folder_table.update_item(
+            Key={"folder_id": folder_id},
+            UpdateExpression="SET upload_state = :upload_state, upload_warning = :upload_warning",
+            ExpressionAttributeValues={
+                ":upload_state": upload_state,
+                ":upload_warning": upload_warning,
+            },
+            ConditionExpression="attribute_exists(folder_id)",
+        )
+
+    def clear_folder_upload_tracking(self, folder_id: str):
+        self.folder_table.update_item(
+            Key={"folder_id": folder_id},
+            UpdateExpression="REMOVE folder_upload_operation_id, folder_upload_root_id, upload_state, upload_warning",
+            ConditionExpression="attribute_exists(folder_id)",
+        )
+
+    def clear_file_upload_tracking(self, file_id: str):
+        self.file_table.update_item(
+            Key={"file_id": file_id},
+            UpdateExpression="REMOVE folder_upload_operation_id, folder_upload_root_id, upload_state",
+            ConditionExpression="attribute_exists(file_id)",
+        )
+
+    def delete_s3_keys(self, delete_objects: list[dict]):
+        if not delete_objects:
+            return
+
+        for index in range(0, len(delete_objects), 1000):
+            batch = delete_objects[index:index + 1000]
+            self.s3.delete_objects(
+                Bucket=self.bucket,
+                Delete={"Objects": batch, "Quiet": True},
+            )
+
+    @staticmethod
+    def build_object_depth(path: str):
+        return len([segment for segment in str(path or "").split("/") if segment])
 
     def build_file_key(self, metadata):
         segments = self.build_folder_segments(self.from_storage_parent_folder_id(metadata.get("parent_folder_id")))

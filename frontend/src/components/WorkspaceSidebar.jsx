@@ -3,6 +3,7 @@ export default function WorkspaceSidebar({
   currentPath,
   folderForm,
   uploadForm,
+  folderUploadForm,
   purgeControls,
   moveControls,
   trashControls,
@@ -16,6 +17,7 @@ export default function WorkspaceSidebar({
     return 'Preparing...';
   };
   const renderUploadMode = (entry) => {
+    if (entry.mode === 'folder') return 'Folder upload';
     if (entry.mode === 'replace') return 'Replace mode';
     return 'New file';
   };
@@ -95,6 +97,33 @@ export default function WorkspaceSidebar({
                   ))}
                 </div>
               ) : null}
+            </form>
+          </section>
+
+          <section className="panel side-panel sidebar-panel">
+            <div className="section-head">
+              <h2>Folder upload</h2>
+            </div>
+            <form className="stack-form" onSubmit={folderUploadForm.onSubmit}>
+              <label className="field">
+                <span>Select folder</span>
+                <input type="file" onChange={folderUploadForm.onFolderChange} webkitdirectory="" directory="" multiple />
+              </label>
+              <div className="sidebar-note">To: {currentPath || '/'}</div>
+              <div className="sidebar-note">Limit: 2GB total</div>
+              {folderUploadForm.summary ? (
+                <div className="sidebar-status-card sidebar-status-card-upload">
+                  <div className="sidebar-status-title">{folderUploadForm.summary.rootName || 'Folder ready'}</div>
+                  <div>{folderUploadForm.summary.totalFiles} files</div>
+                  <div className="sidebar-note">{folderUploadForm.summary.totalFolders} folders</div>
+                  <div className="sidebar-note">{folderUploadForm.formatBytes?.(folderUploadForm.summary.totalBytes) || ''}</div>
+                </div>
+              ) : (
+                <div className="sidebar-status-card sidebar-status-idle">Choose a folder to prepare the upload.</div>
+              )}
+              <button className="primary-button" type="submit" disabled={!folderUploadForm.summary || folderUploadForm.submitting}>
+                {folderUploadForm.submitting ? 'Uploading folder...' : 'Upload folder'}
+              </button>
             </form>
           </section>
 

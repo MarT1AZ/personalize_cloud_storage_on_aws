@@ -33,6 +33,13 @@ function TreeNode({
   const isExpanded = !!expandedFolders[nodeKey];
   const isCurrentFolder = isFolder && (node.id || '') === (currentFolderId || '');
   const isDeleted = node.status === 'deleted';
+  const uploadStateTag = node.upload_state === 'repair_required'
+    ? 'Needs repair'
+    : node.upload_state === 'finalizing'
+      ? 'Finalizing'
+      : node.upload_state === 'uploading'
+        ? 'Uploading'
+        : '';
   const hasChildren = Array.isArray(node.children) && node.children.length > 0;
   const showOwnGuide = depth > 0;
 
@@ -75,6 +82,7 @@ function TreeNode({
             <span className="tree-node-name">{node.name}</span>
             {isCurrentFolder ? <span className="tree-node-badge tree-node-badge-current">Current</span> : null}
             {isDeleted ? <span className="tree-node-badge tree-node-badge-deleted">Deleted</span> : null}
+            {uploadStateTag ? <span className="tree-node-badge tree-node-badge-warning">{uploadStateTag}</span> : null}
           </button>
         ) : (
           <div className={`tree-node-file${isDeleted ? ' tree-node-file-deleted' : ''}`}>

@@ -504,6 +504,12 @@ h1 {
   color: #f6c7d4;
 }
 
+.tree-node-badge-warning {
+  background: rgba(115, 83, 22, 0.24);
+  border: 1px solid rgba(211, 171, 83, 0.34);
+  color: #f7df9f;
+}
+
 .tree-node-deleted .tree-node-name,
 .tree-node-file-deleted .tree-node-name,
 .tree-node-button-deleted {
@@ -690,6 +696,15 @@ input[type="file"]::file-selector-button {
   color: #bbf7d0;
 }
 
+.warning-box {
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: rgba(74, 54, 16, 0.86);
+  border: 1px solid rgba(182, 144, 61, 0.54);
+  color: #f8e6a8;
+}
+
 .empty-state {
   padding: 18px 4px 4px;
   color: #8fa3b8;
@@ -830,6 +845,12 @@ input[type="file"]::file-selector-button {
   background: rgba(83, 36, 44, 0.82);
   border: 1px solid rgba(171, 81, 99, 0.72);
   color: #ffd6dc;
+}
+
+.preview-tag-warning {
+  background: rgba(115, 83, 22, 0.24);
+  border: 1px solid rgba(211, 171, 83, 0.34);
+  color: #f7df9f;
 }
 
 .file-path {
@@ -1044,6 +1065,13 @@ input[type="file"]::file-selector-button {
   background:
     linear-gradient(135deg, rgba(53, 95, 183, 0.22) 0%, rgba(123, 33, 80, 0.12) 100%),
     linear-gradient(180deg, rgba(21, 39, 66, 0.86) 0%, rgba(13, 19, 27, 0.98) 100%);
+}
+
+.sidebar-status-card-upload {
+  border-color: rgba(211, 171, 83, 0.32);
+  background:
+    linear-gradient(135deg, rgba(120, 89, 28, 0.16) 0%, rgba(53, 95, 183, 0.1) 100%),
+    linear-gradient(180deg, rgba(39, 33, 20, 0.9) 0%, rgba(13, 19, 27, 0.98) 100%);
 }
 
 .sidebar-status-title {

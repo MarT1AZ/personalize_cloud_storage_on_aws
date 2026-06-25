@@ -61,6 +61,13 @@ function FolderRow({
 }) {
   const isMoveSource = moveSelectionMode && moveSourceId === item.file_id;
   const isMoveDestination = moveSelectionMode && moveDestinationId === item.file_id;
+  const uploadStateTag = item.upload_state === 'repair_required'
+    ? 'Needs repair'
+    : item.upload_state === 'finalizing'
+      ? 'Finalizing'
+      : item.upload_state === 'uploading'
+        ? 'Uploading'
+        : '';
 
   return (
     <li className={`file-row folder-row${isMoveSource ? ' move-source-row' : ''}${isMoveDestination ? ' move-destination-row' : ''}`} key={item.file_id}>
@@ -68,6 +75,7 @@ function FolderRow({
         <button className="folder-open-button" onClick={() => onOpenFolder(item.file_id)} type="button">
           <span className="folder-icon" aria-hidden="true">📁</span>
           <span className="folder-label">{item.name}</span>
+          {uploadStateTag ? <span className="preview-tag preview-tag-warning">{uploadStateTag}</span> : null}
           <span className="folder-path">{item.path}</span>
         </button>
         {deleteMode ? (
@@ -289,6 +297,7 @@ export default function ObjectBrowserPanel(props) {
     totalItemCount,
     breadcrumbItems,
     currentFolderId,
+    currentFolderState,
     searchQuery,
     sortMode,
     groupMode,
@@ -407,6 +416,11 @@ export default function ObjectBrowserPanel(props) {
 
       {error ? <div className="error-box">{error}</div> : null}
       {success ? <div className="success-box">{success}</div> : null}
+      {viewMode === 'files' && currentFolderState?.upload_state ? (
+        <div className="warning-box">
+          {currentFolderState.upload_warning || `This folder is currently ${String(currentFolderState.upload_state).replace(/_/g, ' ')}.`}
+        </div>
+      ) : null}
       {recentDeletes.length > 0 ? (
         <div className="delete-history-box">
           <div className="delete-history-title">Recently deleted</div>
