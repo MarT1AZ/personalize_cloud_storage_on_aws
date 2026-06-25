@@ -100,10 +100,14 @@ App run:
 - is intended for maintenance commands such as storage validation scripts
 - keeps the main runtime image slim by leaving scripts out of `backend/dockerfile`
 - build command: `docker build -f scripts/dockerfile -t pcs_backend_ops .`
-- run DB -> S3 validation:
-  `docker run --rm --env-file backend/pcs_backend_production.env -v ${USERPROFILE}/.aws:/root/.aws:ro pcs_backend_ops python /app/scripts/check_storage_consistency.py --bucket <bucket-name>`
-- run S3 -> DB validation:
-  `docker run --rm --env-file backend/pcs_backend_production.env -v ${USERPROFILE}/.aws:/root/.aws:ro pcs_backend_ops python /app/scripts/check_s3_source_of_truth.py --bucket <bucket-name>`
+- run object integrity validation:
+  `docker run --rm --env-file backend/.env -v ${USERPROFILE}/.aws:/root/.aws:ro pcs_backend_ops python /app/scripts/check_storage_object_integrity.py --bucket <bucket-name>`
+- run object integrity validation for one user:
+  `docker run --rm --env-file backend/.env -v ${USERPROFILE}/.aws:/root/.aws:ro pcs_backend_ops python /app/scripts/check_storage_object_integrity.py --bucket <bucket-name> --user-id <user-id>`
+- run operation log integrity validation:
+  `docker run --rm --env-file backend/.env -v ${USERPROFILE}/.aws:/root/.aws:ro pcs_backend_ops python /app/scripts/check_storage_log_integrity.py`
+- run operation log integrity validation for one user:
+  `docker run --rm --env-file backend/.env -v ${USERPROFILE}/.aws:/root/.aws:ro pcs_backend_ops python /app/scripts/check_storage_log_integrity.py --user-id <user-id>`
 
 ## Runtime Notes
 - `python-multipart` is required for uploads
