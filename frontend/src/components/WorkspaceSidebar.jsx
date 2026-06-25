@@ -65,52 +65,21 @@ export default function WorkspaceSidebar({
                   ? 'If a file with the same name already exists here, the new upload will replace it.'
                   : 'If the same name already exists, a copied name will be created.'}
               </div>
+              <div className="sidebar-note">Auto-detect: file upload</div>
               <div className="sidebar-note">Limit: 1GB</div>
               <button className="primary-button" type="submit" disabled={!uploadForm.selectedFile || uploadForm.submitting}>
                 {uploadForm.submitting ? 'Uploading...' : 'Upload'}
               </button>
-              {uploadForm.uploadEntries?.length ? (
-                <div className="upload-activity-list">
-                  {uploadForm.uploadEntries.map((entry) => (
-                    <div
-                      className={`upload-activity-card upload-activity-${entry.status}`}
-                      key={entry.id}
-                    >
-                      <div className="upload-activity-head">
-                        <div className="upload-activity-name">{entry.name}</div>
-                        <div className="upload-activity-percent">{renderUploadStatus(entry)}</div>
-                      </div>
-                      <div className="upload-activity-meta">
-                        <span>{entry.targetPath || '/'}</span>
-                        <span>{uploadForm.formatBytes?.(entry.size) || ''}</span>
-                      </div>
-                      <div className="upload-activity-mode">
-                        {renderUploadMode(entry)}
-                      </div>
-                      <div className="upload-progress-track" aria-hidden="true">
-                        <div className="upload-progress-fill" style={{ width: `${entry.progress || 0}%` }} />
-                      </div>
-                      {entry.errorMessage ? (
-                        <div className="upload-activity-error">{entry.errorMessage}</div>
-                      ) : null}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
             </form>
-          </section>
-
-          <section className="panel side-panel sidebar-panel">
-            <div className="section-head">
-              <h2>Folder upload</h2>
-            </div>
             <form className="stack-form" onSubmit={folderUploadForm.onSubmit}>
               <label className="field">
                 <span>Select folder</span>
                 <input type="file" onChange={folderUploadForm.onFolderChange} webkitdirectory="" directory="" multiple />
               </label>
               <div className="sidebar-note">To: {currentPath || '/'}</div>
+              <div className="sidebar-note">Auto-detect: folder upload</div>
               <div className="sidebar-note">Limit: 2GB total</div>
+              <div className="sidebar-note">Same-name folder upload is not supported yet.</div>
               {folderUploadForm.summary ? (
                 <div className="sidebar-status-card sidebar-status-card-upload">
                   <div className="sidebar-status-title">{folderUploadForm.summary.rootName || 'Folder ready'}</div>
@@ -125,6 +94,34 @@ export default function WorkspaceSidebar({
                 {folderUploadForm.submitting ? 'Uploading folder...' : 'Upload folder'}
               </button>
             </form>
+            {uploadForm.uploadEntries?.length ? (
+              <div className="upload-activity-list">
+                {uploadForm.uploadEntries.map((entry) => (
+                  <div
+                    className={`upload-activity-card upload-activity-${entry.status}`}
+                    key={entry.id}
+                  >
+                    <div className="upload-activity-head">
+                      <div className="upload-activity-name">{entry.name}</div>
+                      <div className="upload-activity-percent">{renderUploadStatus(entry)}</div>
+                    </div>
+                    <div className="upload-activity-meta">
+                      <span>{entry.targetPath || '/'}</span>
+                      <span>{uploadForm.formatBytes?.(entry.size) || ''}</span>
+                    </div>
+                    <div className="upload-activity-mode">
+                      {renderUploadMode(entry)}
+                    </div>
+                    <div className="upload-progress-track" aria-hidden="true">
+                      <div className="upload-progress-fill" style={{ width: `${entry.progress || 0}%` }} />
+                    </div>
+                    {entry.errorMessage ? (
+                      <div className="upload-activity-error">{entry.errorMessage}</div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </section>
 
           <section className="panel side-panel operation-tool-panel sidebar-panel sidebar-panel-purge">
