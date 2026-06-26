@@ -3,6 +3,7 @@ import base64
 import logging
 from pathlib import PurePosixPath
 import secrets
+from urllib.parse import quote
 
 import boto3
 from boto3.dynamodb.conditions import Attr, Key
@@ -745,7 +746,7 @@ class ObjectStorageService:
             Params={
                 "Bucket": self.bucket,
                 "Key": self.build_file_key(metadata),
-                "ResponseContentDisposition": f'attachment; filename="{filename}"',
+                "ResponseContentDisposition": self.build_download_content_disposition(filename),
             },
             ExpiresIn=60,
         )
@@ -755,6 +756,14 @@ class ObjectStorageService:
             "url": url,
             "expires_in": 60,
         }
+
+    @staticmethod
+    def build_download_content_disposition(filename: str) -> str:
+        normalized_name = str(filename or "").strip() or "download"
+        ascii_fallback = "".join(char if ord(char) < 128 else "_" for char in normalized_name) or "download"
+        escaped_ascii_fallback = ascii_fallback.replace("\\", "\\\\").replace('"', '\\"')
+        encoded_filename = quote(normalized_name, safe="")
+        return f"attachment; filename=\"{escaped_ascii_fallback}\"; filename*=UTF-8''{encoded_filename}"
 
     def get_preview_url(self, file_id: str):
         self.resource_guard.tables(self.file_table)
